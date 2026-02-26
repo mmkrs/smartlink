@@ -58,7 +58,7 @@ Goal: update changelog file(s) from staged git changes only.
 Modes:
 
 - `/changelog help` or `--help`: return a short usage guide and stop (no file edits).
-- `/changelog`: update `## [Unreleased]` only.
+- `/changelog`: create or update `## [Unreleased]` only.
 - `/changelog <version>`: create/update `## [<version>] - YYYY-MM-DD` from `[Unreleased]`.
 
 Rules:

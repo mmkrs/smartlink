@@ -470,10 +470,130 @@ printf '\n'
 printf 'Generated files: %s\n' "$total"
 printf -- '- written: %s\n' "$written"
 printf -- '- unchanged: %s\n' "$unchanged"
-printf '\n'
-printf 'Isolation report:\n'
+
+# ── Global symlinks ──────────────────────────────────────────────────
+
+OPENCODE_GLOBAL="$HOME/.config/opencode"
+CLAUDE_GLOBAL="$HOME/.claude"
+CURSOR_GLOBAL="$HOME/.cursor"
+
+symlinked=0
+copied=0
+skipped=0
+backed_up=0
+
+# Probe: test if symlinks are available on this system
+symlink_failed=0
+probe_target="$(mktemp -u)"
+if ln -s "$ROOT/.gitignore" "$probe_target" 2>/dev/null && [ -L "$probe_target" ]; then
+  rm -f "$probe_target"
+else
+  rm -f "$probe_target" 2>/dev/null
+  symlink_failed=1
+  printf 'WARN  Symlinks not available. Falling back to copy.\n'
+fi
+
+safe_symlink() {
+  local source="$1"
+  local target="$2"
+  local rel_source rel_target stamp
+
+  rel_source="${source#$ROOT/}"
+  rel_target="${target#$HOME/}"
+
+  if [ -L "$target" ]; then
+    local existing_link
+    existing_link="$(readlink "$target")"
+    if [ "$existing_link" = "$source" ]; then
+      printf 'link  ~/%s  (ok)\n' "$rel_target"
+      skipped=$((skipped + 1))
+      return
+    fi
+    # Symlink exists but points elsewhere — remove it (no backup needed for symlinks)
+    rm -f "$target"
+  elif [ -f "$target" ]; then
+    if [ "$symlink_failed" -eq 1 ]; then
+      # Copy-fallback mode — check if content matches
+      if cmp -s "$source" "$target"; then
+        printf 'copy  ~/%s  (ok)\n' "$rel_target"
+        skipped=$((skipped + 1))
+        return
+      fi
+      rm -f "$target"
+    else
+      stamp="$(date +%Y%m%d-%H%M%S)"
+      mv "$target" "$target.bak.$stamp"
+      printf 'backup ~/%s -> ~/%s.bak.%s\n' "$rel_target" "$rel_target" "$stamp"
+      backed_up=$((backed_up + 1))
+    fi
+  fi
+
+  mkdir -p "$(dirname "$target")"
+
+  if [ "$symlink_failed" -eq 0 ]; then
+    ln -s "$source" "$target"
+    printf 'link  ~/%s -> %s\n' "$rel_target" "$rel_source"
+    symlinked=$((symlinked + 1))
+  else
+    cp "$source" "$target"
+    printf 'copy  ~/%s <- %s\n' "$rel_target" "$rel_source"
+    copied=$((copied + 1))
+  fi
+}
+
+printf '\nGlobal symlinks:\n'
+
+# Symlink commands
+for file in "$SHARED_COMMANDS_DIR"/*.md; do
+  [ -f "$file" ] || continue
+  name="$(basename "$file" .md)"
+
+  # OpenCode
+  safe_symlink "$ROOT/.opencode/commands/$name.md" "$OPENCODE_GLOBAL/commands/$name.md"
+  # Claude Code
+  safe_symlink "$ROOT/.claude/commands/$name.md" "$CLAUDE_GLOBAL/commands/$name.md"
+  # Cursor
+  safe_symlink "$ROOT/.cursor/commands/$name.md" "$CURSOR_GLOBAL/commands/$name.md"
+done
+
+# Symlink agents
+for file in "$SHARED_AGENTS_DIR"/*.md; do
+  [ -f "$file" ] || continue
+  name="$(basename "$file" .md)"
+
+  # OpenCode
+  safe_symlink "$ROOT/.opencode/agents/$name.md" "$OPENCODE_GLOBAL/agents/$name.md"
+  # Claude Code
+  safe_symlink "$ROOT/.claude/agents/$name.md" "$CLAUDE_GLOBAL/agents/$name.md"
+  # Cursor
+  safe_symlink "$ROOT/.cursor/agents/$name.md" "$CURSOR_GLOBAL/agents/$name.md"
+done
+
+printf '\nSymlink summary:\n'
+if [ "$symlinked" -gt 0 ]; then
+  printf -- '- linked: %s\n' "$symlinked"
+fi
+if [ "$copied" -gt 0 ]; then
+  printf -- '- copied: %s\n' "$copied"
+fi
+printf -- '- unchanged: %s\n' "$skipped"
+if [ "$backed_up" -gt 0 ]; then
+  printf -- '- backed up: %s\n' "$backed_up"
+fi
+if [ "$symlink_failed" -eq 1 ]; then
+  printf '\n'
+  printf 'WARN: Symlinks were not available. Files were copied instead.\n'
+  printf '      Copies will NOT auto-update when you re-generate. Re-run setup after changes.\n'
+  printf '      To enable symlinks, activate Developer Mode in Windows Settings > For developers.\n'
+fi
+
+printf '\nIsolation report:\n'
 printf -- '- OpenCode reads .opencode/commands and .opencode/agents.\n'
 printf -- '- Claude Code reads .claude/commands and .claude/agents.\n'
 printf -- '- Cursor reads .cursor/commands and .cursor/agents (and may also read .claude/agents for compatibility).\n'
 printf -- '- VS Code Copilot reads .github/prompts and .github/agents (and may also read .claude/agents for compatibility).\n'
 printf -- '- Potentially shared files (.claude/.cursor/.github) are generated from the same canonical source.\n'
+printf '\n'
+printf 'NOTE: VS Code has no fixed global config directory for prompts/agents.\n'
+printf '      To use generated prompts/agents globally, add this to your VS Code settings.json:\n'
+printf '        "chat.agentFilesLocations": { "%s/.github": true }\n' "$ROOT"

@@ -1,9 +1,7 @@
-.ruff_cache/
-__pycache__/
-
 # Generated tool-specific wrappers (source is pack/shared/*)
 .claude/
 .cursor/
 .opencode/
 .github/prompts/*.prompt.md
 .github/agents/*.agent.md
+nul

@@ -445,6 +445,152 @@ Write-Host ""
 Write-Host "Generated files: $total"
 Write-Host "- written: $written"
 Write-Host "- unchanged: $unchanged"
+
+# ── Global symlinks ──────────────────────────────────────────────────
+
+$HomePath = $HOME
+$OpenCodeGlobal = Join-Path $HomePath ".config/opencode"
+$ClaudeGlobal = Join-Path $HomePath ".claude"
+$CursorGlobal = Join-Path $HomePath ".cursor"
+
+$symlinked = 0
+$copied = 0
+$linkSkipped = 0
+$backedUp = 0
+
+# Probe: test if symlinks are available on this system
+$symlinkFailed = $false
+$probeSource = Join-Path $Root ".gitignore"
+$probeTarget = Join-Path $env:TEMP "smartlink_symlink_probe_$([System.IO.Path]::GetRandomFileName())"
+try {
+    New-Item -ItemType SymbolicLink -Path $probeTarget -Target $probeSource -Force -ErrorAction Stop | Out-Null
+    Remove-Item -LiteralPath $probeTarget -Force -ErrorAction SilentlyContinue
+}
+catch {
+    $symlinkFailed = $true
+    Write-Host "WARN  Symlinks require admin or Developer Mode. Falling back to copy."
+}
+
+function Safe-Symlink {
+    param(
+        [string]$Source,
+        [string]$Target
+    )
+
+    $relSource = $Source
+    if ($Source.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $relSource = $Source.Substring($Root.Length).TrimStart([char]'\', [char]'/')
+    }
+    $relTarget = $Target
+    if ($Target.StartsWith($HomePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $relTarget = $Target.Substring($HomePath.Length).TrimStart([char]'\', [char]'/')
+    }
+
+    $item = $null
+    if (Test-Path -LiteralPath $Target) {
+        $item = Get-Item -LiteralPath $Target -Force
+    }
+
+    if ($null -ne $item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        # It's a symlink — check where it points
+        $existingLink = $item.Target
+        # Normalize for comparison
+        $normalizedSource = $Source.Replace('/', '\')
+        $normalizedExisting = if ($null -ne $existingLink) { $existingLink.Replace('/', '\') } else { "" }
+        if ($normalizedExisting -eq $normalizedSource) {
+            Write-Host ("link  ~/{0}  (ok)" -f $relTarget)
+            $script:linkSkipped++
+            return
+        }
+        # Symlink points elsewhere — remove it (no backup needed for symlinks)
+        Remove-Item -LiteralPath $Target -Force
+    }
+    elseif ($null -ne $item) {
+        # Regular file — check if content already matches (idempotent copy)
+        if (-not $script:symlinkFailed) {
+            # First time: might still succeed with symlink, so back up
+            $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+            $backupPath = "$Target.bak.$stamp"
+            Move-Item -LiteralPath $Target -Destination $backupPath -Force
+            Write-Host ("backup ~/{0} -> ~/{0}.bak.{1}" -f $relTarget, $stamp)
+            $script:backedUp++
+        }
+        else {
+            # We're in copy-fallback mode — check if content matches
+            $sourceContent = [System.IO.File]::ReadAllText($Source) -replace "`r`n", "`n"
+            $targetContent = [System.IO.File]::ReadAllText($Target) -replace "`r`n", "`n"
+            if ($sourceContent -ceq $targetContent) {
+                Write-Host ("copy  ~/{0}  (ok)" -f $relTarget)
+                $script:linkSkipped++
+                return
+            }
+            Remove-Item -LiteralPath $Target -Force
+        }
+    }
+
+    $parent = Split-Path -Parent $Target
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    if (-not $script:symlinkFailed) {
+        New-Item -ItemType SymbolicLink -Path $Target -Target $Source -Force | Out-Null
+        Write-Host ("link  ~/{0} -> {1}" -f $relTarget, $relSource)
+        $script:symlinked++
+    }
+    else {
+        Copy-Item -LiteralPath $Source -Destination $Target -Force
+        Write-Host ("copy  ~/{0} <- {1}" -f $relTarget, $relSource)
+        $script:copied++
+    }
+}
+
+Write-Host ""
+Write-Host "Global symlinks:"
+
+# Symlink commands
+foreach ($file in $commandFiles) {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+
+    # OpenCode
+    Safe-Symlink -Source (Join-Path $Root ".opencode/commands/$name.md") -Target (Join-Path $OpenCodeGlobal "commands/$name.md")
+    # Claude Code
+    Safe-Symlink -Source (Join-Path $Root ".claude/commands/$name.md") -Target (Join-Path $ClaudeGlobal "commands/$name.md")
+    # Cursor
+    Safe-Symlink -Source (Join-Path $Root ".cursor/commands/$name.md") -Target (Join-Path $CursorGlobal "commands/$name.md")
+}
+
+# Symlink agents
+foreach ($file in $agentFiles) {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+
+    # OpenCode
+    Safe-Symlink -Source (Join-Path $Root ".opencode/agents/$name.md") -Target (Join-Path $OpenCodeGlobal "agents/$name.md")
+    # Claude Code
+    Safe-Symlink -Source (Join-Path $Root ".claude/agents/$name.md") -Target (Join-Path $ClaudeGlobal "agents/$name.md")
+    # Cursor
+    Safe-Symlink -Source (Join-Path $Root ".cursor/agents/$name.md") -Target (Join-Path $CursorGlobal "agents/$name.md")
+}
+
+Write-Host ""
+Write-Host "Symlink summary:"
+if ($symlinked -gt 0) {
+    Write-Host "- linked: $symlinked"
+}
+if ($copied -gt 0) {
+    Write-Host "- copied: $copied"
+}
+Write-Host "- unchanged: $linkSkipped"
+if ($backedUp -gt 0) {
+    Write-Host "- backed up: $backedUp"
+}
+if ($symlinkFailed) {
+    Write-Host ""
+    Write-Host "WARN: Symlinks were not available. Files were copied instead."
+    Write-Host "      Copies will NOT auto-update when you re-generate. Re-run setup after changes."
+    Write-Host "      To enable symlinks, activate Developer Mode in Windows Settings > For developers."
+}
+
 Write-Host ""
 Write-Host "Isolation report:"
 Write-Host "- OpenCode reads .opencode/commands and .opencode/agents."
@@ -452,3 +598,7 @@ Write-Host "- Claude Code reads .claude/commands and .claude/agents."
 Write-Host "- Cursor reads .cursor/commands and .cursor/agents (and may also read .claude/agents for compatibility)."
 Write-Host "- VS Code Copilot reads .github/prompts and .github/agents (and may also read .claude/agents for compatibility)."
 Write-Host "- Potentially shared files (.claude/.cursor/.github) are generated from the same canonical source."
+Write-Host ""
+Write-Host "NOTE: VS Code has no fixed global config directory for prompts/agents."
+Write-Host "      To use generated prompts/agents globally, add this to your VS Code settings.json:"
+Write-Host "        `"chat.agentFilesLocations`": { `"$Root/.github`": true }"
