@@ -466,6 +466,84 @@ if [ "$command_count" -eq 0 ] && [ "$agent_count" -eq 0 ]; then
   exit 1
 fi
 
+# ── MCP config generation ──────────────────────────────────────────────
+SHARED_MCP_FILE="$ROOT/pack/shared/mcp.json"
+MCP_GENERATED=0
+
+if [ -f "$SHARED_MCP_FILE" ]; then
+  if ! command -v python3 &>/dev/null; then
+    printf 'WARN  python3 not found — skipping MCP config generation.\n' >&2
+  else
+    MCP_GENERATED=1
+
+    # Single Python transform: canonical type → per-tool format
+    # type "stdio" (default) = local subprocess
+    # type "http"            = streamable HTTP (recommended for remote)
+    # type "sse"             = legacy SSE remote
+    _mcp_py="$(mktemp)"
+    cat > "$_mcp_py" << 'PYEOF'
+import json, sys, collections
+
+with open(sys.argv[1]) as f:
+    src = json.load(f, object_pairs_hook=collections.OrderedDict)
+
+claude = collections.OrderedDict()
+cursor = collections.OrderedDict()
+vscode = collections.OrderedDict()
+opencode = collections.OrderedDict()
+
+for name, srv in src.items():
+    ct = (srv.get('type') or ('http' if 'url' in srv else 'stdio')).strip()
+    if ct == 'stdio':
+        # Claude / Cursor / VS Code: command (string) + args (array) + env
+        e = collections.OrderedDict()
+        if 'command' in srv: e['command'] = srv['command']
+        if 'args'    in srv: e['args']    = list(srv['args'])
+        if 'env'     in srv: e['env']     = srv['env']
+        claude[name] = cursor[name] = vscode[name] = e
+        # OpenCode: type=local, command=[cmd, ...args], environment
+        oc = collections.OrderedDict({'type': 'local'})
+        oc['command'] = ([srv['command']] if 'command' in srv else []) + list(srv.get('args', []))
+        if 'env' in srv: oc['environment'] = srv['env']
+        opencode[name] = oc
+    else:
+        h = srv.get('headers')
+        # Claude / VS Code: explicit type (http|sse), url, headers
+        cc = collections.OrderedDict({'type': ct})
+        if 'url' in srv: cc['url'] = srv['url']
+        if h:            cc['headers'] = h
+        claude[name] = vscode[name] = cc
+        # Cursor: no type field (auto-detected from url), url, headers
+        cu = collections.OrderedDict()
+        if 'url' in srv: cu['url'] = srv['url']
+        if h:            cu['headers'] = h
+        cursor[name] = cu
+        # OpenCode: type=remote (single value for all remote transports), url, headers
+        oc = collections.OrderedDict({'type': 'remote'})
+        if 'url' in srv: oc['url'] = srv['url']
+        if h:            oc['headers'] = h
+        opencode[name] = oc
+
+fmt = sys.argv[2]
+if fmt == 'claude':   print(json.dumps({'mcpServers': claude},  indent=2))
+if fmt == 'cursor':   print(json.dumps({'mcpServers': cursor},  indent=2))
+if fmt == 'vscode':   print(json.dumps({'servers':    vscode},  indent=2))
+if fmt == 'opencode': print(json.dumps(opencode,                indent=2))
+PYEOF
+
+    claude_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" claude)"
+    cursor_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" cursor)"
+    vscode_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" vscode)"
+    opencode_mcp_json="$(python3 "$_mcp_py" "$SHARED_MCP_FILE" opencode)"
+    rm -f "$_mcp_py"
+
+    # Write project-level MCP configs
+    write_if_changed "$ROOT/.mcp.json"        "$claude_mcp_json"$'\n'
+    write_if_changed "$ROOT/.cursor/mcp.json" "$cursor_mcp_json"$'\n'
+    write_if_changed "$ROOT/.vscode/mcp.json" "$vscode_mcp_json"$'\n'
+  fi
+fi
+
 printf '\n'
 printf 'Generated files: %s\n' "$total"
 printf -- '- written: %s\n' "$written"
@@ -476,6 +554,11 @@ printf -- '- unchanged: %s\n' "$unchanged"
 OPENCODE_GLOBAL="$HOME/.config/opencode"
 CLAUDE_GLOBAL="$HOME/.claude"
 CURSOR_GLOBAL="$HOME/.cursor"
+if [[ "$(uname)" == "Darwin" ]]; then
+  VSCODE_GLOBAL="$HOME/Library/Application Support/Code/User"
+else
+  VSCODE_GLOBAL="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User"
+fi
 
 symlinked=0
 copied=0
@@ -556,6 +639,71 @@ for file in "$SHARED_COMMANDS_DIR"/*.md; do
   safe_symlink "$ROOT/.cursor/commands/$name.md" "$CURSOR_GLOBAL/commands/$name.md"
 done
 
+# Symlink MCP configs
+if [ "$MCP_GENERATED" -eq 1 ]; then
+
+  # Claude Code: merge mcpServers key into ~/.claude.json
+  claude_json_path="$HOME/.claude.json"
+  new_claude_json="$(python3 -c "
+import json, sys, collections
+existing = collections.OrderedDict()
+try:
+    with open(sys.argv[1]) as f:
+        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+mcp = json.loads(sys.argv[2])
+existing['mcpServers'] = mcp['mcpServers']
+print(json.dumps(existing, indent=2))
+" "$claude_json_path" "$claude_mcp_json" 2>/dev/null || echo "$claude_mcp_json")"
+
+  tmp_claude="$(mktemp)"
+  printf '%s\n' "$new_claude_json" > "$tmp_claude"
+  if [ -f "$claude_json_path" ] && cmp -s "$claude_json_path" "$tmp_claude"; then
+    printf 'ok    ~/.claude.json\n'
+    skipped=$((skipped + 1))
+  else
+    mv "$tmp_claude" "$claude_json_path"
+    printf 'write ~/.claude.json\n'
+    copied=$((copied + 1))
+  fi
+  rm -f "$tmp_claude" 2>/dev/null
+
+  # Cursor: ~/.cursor/mcp.json (standalone, symlink/copy)
+  safe_symlink "$ROOT/.cursor/mcp.json" "$CURSOR_GLOBAL/mcp.json"
+
+  # VS Code: global user-level mcp.json
+  safe_symlink "$ROOT/.vscode/mcp.json" "$VSCODE_GLOBAL/mcp.json"
+
+  # OpenCode: merge mcp key into ~/.config/opencode/opencode.json
+  oc_global_path="$OPENCODE_GLOBAL/opencode.json"
+  new_oc_json="$(python3 -c "
+import json, sys, collections
+existing = collections.OrderedDict()
+try:
+    with open(sys.argv[1]) as f:
+        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+mcp = json.loads(sys.argv[2])
+existing['mcp'] = mcp
+print(json.dumps(existing, indent=2))
+" "$oc_global_path" "$opencode_mcp_json" 2>/dev/null || printf '{"mcp": %s}' "$opencode_mcp_json")"
+
+  mkdir -p "$OPENCODE_GLOBAL"
+  tmp_oc="$(mktemp)"
+  printf '%s\n' "$new_oc_json" > "$tmp_oc"
+  if [ -f "$oc_global_path" ] && cmp -s "$oc_global_path" "$tmp_oc"; then
+    printf 'ok    ~/.config/opencode/opencode.json (mcp merged)\n'
+    skipped=$((skipped + 1))
+  else
+    mv "$tmp_oc" "$oc_global_path"
+    printf 'write ~/.config/opencode/opencode.json (mcp merged)\n'
+    copied=$((copied + 1))
+  fi
+  rm -f "$tmp_oc" 2>/dev/null
+fi
+
 # Symlink agents
 for file in "$SHARED_AGENTS_DIR"/*.md; do
   [ -f "$file" ] || continue
@@ -588,11 +736,16 @@ if [ "$symlink_failed" -eq 1 ]; then
 fi
 
 printf '\nIsolation report:\n'
-printf -- '- OpenCode reads .opencode/commands and .opencode/agents.\n'
-printf -- '- Claude Code reads .claude/commands and .claude/agents.\n'
-printf -- '- Cursor reads .cursor/commands and .cursor/agents (and may also read .claude/agents for compatibility).\n'
-printf -- '- VS Code Copilot reads .github/prompts and .github/agents (and may also read .claude/agents for compatibility).\n'
-printf -- '- Potentially shared files (.claude/.cursor/.github) are generated from the same canonical source.\n'
+printf -- '- OpenCode reads .opencode/commands, .opencode/agents, and mcp from opencode.json.\n'
+printf -- '- Claude Code reads .claude/commands, .claude/agents, and .mcp.json.\n'
+printf -- '- Cursor reads .cursor/commands, .cursor/agents, and .cursor/mcp.json.\n'
+printf -- '- VS Code Copilot reads .github/prompts, .github/agents, and .vscode/mcp.json.\n'
+printf -- '- All generated from the same canonical source in pack/shared/.\n'
+printf '\nMCP servers:\n'
+printf -- '- Claude Code: .mcp.json (project) + ~/.claude.json mcpServers (global)\n'
+printf -- '- Cursor: .cursor/mcp.json (project) + ~/.cursor/mcp.json (global, symlinked)\n'
+printf -- '- OpenCode: mcp key merged into ~/.config/opencode/opencode.json (global)\n'
+printf -- '- VS Code: .vscode/mcp.json (project) + ~/.config/Code/User/mcp.json (global, symlinked)\n'
 printf '\n'
 printf 'NOTE: VS Code has no fixed global config directory for prompts/agents.\n'
 printf '      To use generated prompts/agents globally, add this to your VS Code settings.json:\n'

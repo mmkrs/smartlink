@@ -4,4 +4,9 @@
 .opencode/
 .github/prompts/*.prompt.md
 .github/agents/*.agent.md
+
+# Generated MCP configs (source is pack/shared/mcp.json)
+.mcp.json
+.vscode/mcp.json
+
 nul

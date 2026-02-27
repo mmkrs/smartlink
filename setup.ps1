@@ -433,6 +433,105 @@ foreach ($file in $agentFiles) {
         })
 }
 
+# ── MCP config generation ────────────────────────────────────────────
+$SharedMcpFile = Join-Path $Root "pack/shared/mcp.json"
+if (Test-Path -LiteralPath $SharedMcpFile) {
+    $mcpRaw = [System.IO.File]::ReadAllText($SharedMcpFile) | ConvertFrom-Json
+
+    # ── Build per-tool MCP configs ───────────────────────────────────────────
+    # Canonical type: "stdio" (local subprocess) | "http" (streamable HTTP) | "sse" (legacy SSE)
+    # Inferred: explicit "type" field > "url" present → "http" > default "stdio"
+    $claudeMcp   = [ordered]@{}
+    $cursorMcp   = [ordered]@{}
+    $vscodeMcp   = [ordered]@{}
+    $opencodeMcp = [ordered]@{}
+
+    foreach ($prop in $mcpRaw.PSObject.Properties) {
+        $server = $prop.Value
+        $name   = $prop.Name
+
+        $canonType = if ($null -ne $server.type -and "$($server.type)".Trim() -ne "") {
+            "$($server.type)".Trim()
+        } elseif ($null -ne $server.url) {
+            "http"
+        } else {
+            "stdio"
+        }
+
+        if ($canonType -eq "stdio") {
+            # ── Local subprocess ─────────────────────────────────────────────
+            # Claude Code / Cursor / VS Code: command (string) + args (array) + env
+            $entry = [ordered]@{}
+            if ($null -ne $server.command) { $entry["command"] = $server.command }
+            if ($null -ne $server.args)    { $entry["args"] = @($server.args) }
+            if ($null -ne $server.env) {
+                $envObj = [ordered]@{}
+                foreach ($e in $server.env.PSObject.Properties) { $envObj[$e.Name] = $e.Value }
+                $entry["env"] = $envObj
+            }
+            $claudeMcp[$name] = $entry
+            $cursorMcp[$name] = $entry  # identical for stdio
+            $vscodeMcp[$name] = $entry  # identical for stdio
+
+            # OpenCode: type="local", command=[cmd, ...args], environment
+            $cmdArray = @()
+            if ($null -ne $server.command) { $cmdArray += $server.command }
+            if ($null -ne $server.args)    { $cmdArray += @($server.args) }
+            $ocEntry = [ordered]@{ type = "local"; command = $cmdArray }
+            if ($null -ne $server.env) {
+                $envObj = [ordered]@{}
+                foreach ($e in $server.env.PSObject.Properties) { $envObj[$e.Name] = $e.Value }
+                $ocEntry["environment"] = $envObj
+            }
+            $opencodeMcp[$name] = $ocEntry
+        } else {
+            # ── Remote server: http or sse ───────────────────────────────────
+            $hObj = $null
+            if ($null -ne $server.headers) {
+                $hObj = [ordered]@{}
+                foreach ($h in $server.headers.PSObject.Properties) { $hObj[$h.Name] = $h.Value }
+            }
+
+            # Claude Code / VS Code: explicit type ("http" or "sse"), url, headers
+            $entry = [ordered]@{ type = $canonType }
+            if ($null -ne $server.url) { $entry["url"] = $server.url }
+            if ($null -ne $hObj)       { $entry["headers"] = $hObj }
+            $claudeMcp[$name] = $entry
+            $vscodeMcp[$name] = $entry  # same format as Claude Code
+
+            # Cursor: no type field (transport auto-detected from url), url, headers
+            $cursorEntry = [ordered]@{}
+            if ($null -ne $server.url) { $cursorEntry["url"] = $server.url }
+            if ($null -ne $hObj)       { $cursorEntry["headers"] = $hObj }
+            $cursorMcp[$name] = $cursorEntry
+
+            # OpenCode: type="remote" (single value for all remote transports), url, headers
+            $ocEntry = [ordered]@{ type = "remote" }
+            if ($null -ne $server.url) { $ocEntry["url"] = $server.url }
+            if ($null -ne $hObj)       { $ocEntry["headers"] = $hObj }
+            $opencodeMcp[$name] = $ocEntry
+        }
+    }
+
+    $claudeMcpJson = (@{ mcpServers = $claudeMcp } | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+    $cursorMcpJson = (@{ mcpServers = $cursorMcp } | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+    $vscodeMcpJson = (@{ servers    = $vscodeMcp } | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+
+    # Project-level outputs
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".mcp.json"
+        Content = "$claudeMcpJson`n"
+    })
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".cursor/mcp.json"
+        Content = "$cursorMcpJson`n"
+    })
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".vscode/mcp.json"
+        Content = "$vscodeMcpJson`n"
+    })
+}
+
 $written = 0
 $unchanged = 0
 $total = 0
@@ -452,6 +551,7 @@ $HomePath = $HOME
 $OpenCodeGlobal = Join-Path $HomePath ".config/opencode"
 $ClaudeGlobal = Join-Path $HomePath ".claude"
 $CursorGlobal = Join-Path $HomePath ".cursor"
+$VSCodeGlobal = Join-Path $env:APPDATA "Code/User"
 
 $symlinked = 0
 $copied = 0
@@ -560,6 +660,77 @@ foreach ($file in $commandFiles) {
     Safe-Symlink -Source (Join-Path $Root ".cursor/commands/$name.md") -Target (Join-Path $CursorGlobal "commands/$name.md")
 }
 
+# Symlink MCP configs
+if (Test-Path -LiteralPath $SharedMcpFile) {
+
+    # Helper: convert PSCustomObject to ordered hashtable (PS 5.1 compat)
+    function ConvertTo-OrderedHash {
+        param($InputObject)
+        if ($null -eq $InputObject) { return [ordered]@{} }
+        $hash = [ordered]@{}
+        foreach ($prop in $InputObject.PSObject.Properties) {
+            if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
+                $hash[$prop.Name] = ConvertTo-OrderedHash $prop.Value
+            } elseif ($prop.Value -is [System.Array]) {
+                $hash[$prop.Name] = @($prop.Value)
+            } else {
+                $hash[$prop.Name] = $prop.Value
+            }
+        }
+        return $hash
+    }
+
+    # Claude Code: .mcp.json is project-only, global goes into ~/.claude.json mcpServers key
+    $claudeJsonPath = Join-Path $HomePath ".claude.json"
+    $claudeJsonObj = [ordered]@{}
+    if (Test-Path -LiteralPath $claudeJsonPath) {
+        $parsed = [System.IO.File]::ReadAllText($claudeJsonPath) | ConvertFrom-Json
+        $claudeJsonObj = ConvertTo-OrderedHash $parsed
+    }
+    $claudeJsonObj["mcpServers"] = $claudeMcp
+    $newClaudeJson = ($claudeJsonObj | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+    $newClaudeJson = "$newClaudeJson`n"
+    $claudeJsonStatus = "write"
+    if (Test-Path -LiteralPath $claudeJsonPath) {
+        $existClaudeJson = ([System.IO.File]::ReadAllText($claudeJsonPath)) -replace "`r`n", "`n"
+        if ($existClaudeJson -ceq $newClaudeJson) { $claudeJsonStatus = "ok" }
+    }
+    if ($claudeJsonStatus -eq "write") {
+        [System.IO.File]::WriteAllText($claudeJsonPath, $newClaudeJson, [System.Text.UTF8Encoding]::new($false))
+    }
+    $relClaude = ".claude.json"
+    Write-Host ("{0,-5} ~/{1}" -f $claudeJsonStatus, $relClaude)
+    if ($claudeJsonStatus -eq "write") { $script:copied++ } else { $script:linkSkipped++ }
+
+    # Cursor: ~/.cursor/mcp.json (standalone, symlink/copy)
+    Safe-Symlink -Source (Join-Path $Root ".cursor/mcp.json") -Target (Join-Path $CursorGlobal "mcp.json")
+
+    # VS Code: %APPDATA%/Code/User/mcp.json (standalone, symlink/copy)
+    Safe-Symlink -Source (Join-Path $Root ".vscode/mcp.json") -Target (Join-Path $VSCodeGlobal "mcp.json")
+
+    # OpenCode: merge mcp key into ~/.config/opencode/opencode.json
+    $ocGlobalPath = Join-Path $OpenCodeGlobal "opencode.json"
+    $ocObj = [ordered]@{}
+    if (Test-Path -LiteralPath $ocGlobalPath) {
+        $parsed = [System.IO.File]::ReadAllText($ocGlobalPath) | ConvertFrom-Json
+        $ocObj = ConvertTo-OrderedHash $parsed
+    }
+    $ocObj["mcp"] = $opencodeMcp
+    $newOcJson = ($ocObj | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+    $newOcJson = "$newOcJson`n"
+    $ocStatus = "write"
+    if (Test-Path -LiteralPath $ocGlobalPath) {
+        $existOcJson = ([System.IO.File]::ReadAllText($ocGlobalPath)) -replace "`r`n", "`n"
+        if ($existOcJson -ceq $newOcJson) { $ocStatus = "ok" }
+    }
+    if ($ocStatus -eq "write") {
+        [System.IO.File]::WriteAllText($ocGlobalPath, $newOcJson, [System.Text.UTF8Encoding]::new($false))
+    }
+    $relOc = ".config/opencode/opencode.json (mcp merged)"
+    Write-Host ("{0,-5} ~/{1}" -f $ocStatus, $relOc)
+    if ($ocStatus -eq "write") { $script:copied++ } else { $script:linkSkipped++ }
+}
+
 # Symlink agents
 foreach ($file in $agentFiles) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
@@ -593,11 +764,17 @@ if ($symlinkFailed) {
 
 Write-Host ""
 Write-Host "Isolation report:"
-Write-Host "- OpenCode reads .opencode/commands and .opencode/agents."
-Write-Host "- Claude Code reads .claude/commands and .claude/agents."
-Write-Host "- Cursor reads .cursor/commands and .cursor/agents (and may also read .claude/agents for compatibility)."
-Write-Host "- VS Code Copilot reads .github/prompts and .github/agents (and may also read .claude/agents for compatibility)."
-Write-Host "- Potentially shared files (.claude/.cursor/.github) are generated from the same canonical source."
+Write-Host "- OpenCode reads .opencode/commands, .opencode/agents, and mcp from opencode.json."
+Write-Host "- Claude Code reads .claude/commands, .claude/agents, and .mcp.json."
+Write-Host "- Cursor reads .cursor/commands, .cursor/agents, and .cursor/mcp.json."
+Write-Host "- VS Code Copilot reads .github/prompts, .github/agents, and .vscode/mcp.json."
+Write-Host "- All generated from the same canonical source in pack/shared/."
+Write-Host ""
+Write-Host "MCP servers:"
+Write-Host "- Claude Code: .mcp.json (project) + ~/.claude.json mcpServers (global)"
+Write-Host "- Cursor: .cursor/mcp.json (project) + ~/.cursor/mcp.json (global, symlinked)"
+Write-Host "- OpenCode: mcp key merged into ~/.config/opencode/opencode.json (global)"
+Write-Host "- VS Code: .vscode/mcp.json (project) + %APPDATA%/Code/User/mcp.json (global, symlinked)"
 Write-Host ""
 Write-Host "NOTE: VS Code has no fixed global config directory for prompts/agents."
 Write-Host "      To use generated prompts/agents globally, add this to your VS Code settings.json:"

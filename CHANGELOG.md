@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-02-27
+
+### Added
+
+- `web-researcher` agent (`pack/shared/agents/web-researcher.md`): deep web research subagent that performs iterative multi-layered searches (broad exploration → deep dive → synthesis) and returns a structured answer with cited sources
+- `/resolve-conflicts` command (`pack/shared/commands/resolve-conflicts.md`): AI-assisted merge conflict resolution supporting both merge and rebase modes; auto-detects the default branch, reads conflict markers, applies the most sensible resolution strategy, and stages results
+- `pack/shared/mcp.json`: new canonical MCP server source file; define all MCP servers once (SearXNG pre-configured); `setup` reads this file and generates per-tool configs automatically
+- MCP config generation in `setup.sh` and `setup.ps1`: produces per-tool project-level configs (`.mcp.json` for Claude Code, `.cursor/mcp.json` for Cursor, `.vscode/mcp.json` for VS Code Copilot) and deploys globally — merges `mcpServers` into `~/.claude.json`, symlinks to `~/.cursor/mcp.json` and VS Code's user dir, and merges the `mcp` key into `~/.config/opencode/opencode.json`
+- Generated MCP config files (`.mcp.json`, `.vscode/mcp.json`) added to `.gitignore`
+
 ## [0.0.3] - 2026-02-27
 
 ### Added
