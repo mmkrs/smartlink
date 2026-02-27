@@ -1,7 +1,7 @@
 ---
-name: changelog
-description: Update changelog files from staged git changes
-argument-hint: "[version|help]"
+name: commit
+description: Propose a commit message from staged git changes
+argument-hint: "[short|normal|verbose|help]"
 
 # ==================================================================================
 # SINGLE SOURCE - COMMAND CONFIG CATALOG (commented examples)
@@ -29,7 +29,7 @@ argument-hint: "[version|help]"
 # opencode.extra.top_p: 0.9
 
 # --- Claude command/skill fields
-# claude.argument-hint: "[version|help]"
+# claude.argument-hint: "[help]"
 # claude.disable-model-invocation: true
 # claude.user-invocable: true
 # claude.allowed-tools: Read, Glob, Grep, Bash(git *), Write
@@ -45,43 +45,39 @@ claude.disable-model-invocation: true
 # cursor.extra.note: "no-op"
 
 # --- VS Code prompt file fields
-# vscode.argument-hint: "[version|help]"
+# vscode.argument-hint: "[help]"
 # vscode.agent: agent
 # vscode.model: ['GPT-5.2','Claude Sonnet 4.5']
 # vscode.tools: ['search','read','editFiles','terminalLastCommand','githubRepo','my-mcp/*']
-# vscode.extra.name: changelog
-# vscode.extra.description: Update changelog files from staged git changes
+# vscode.extra.name: commit
+# vscode.extra.description: Propose a commit message from staged git changes
 vscode.agent: agent
 ---
-Goal: update changelog file(s) from staged git changes only.
+Goal: propose a commit message from staged git changes.
 
 Modes:
 
-- `/changelog help` or `--help`: return a short usage guide and stop (no file edits).
-- `/changelog`: create or update `## [Unreleased]` only.
-- `/changelog <version>`: create/update `## [<version>] - YYYY-MM-DD` from `[Unreleased]`.
+- `/commit help` or `--help`: return a short usage guide and stop.
+- `/commit`: propose a `normal` commit message (default).
+- `/commit short`: propose a `short` commit message.
+- `/commit normal`: propose a `normal` commit message.
+- `/commit verbose`: propose a `verbose` commit message.
+
+Formats:
+
+- `short`: one-line subject, max 72 chars, conventional commit format (`type: description`).
+- `normal`: subject line + blank line + 1-3 sentence body explaining the why.
+- `verbose`: subject line + blank line + bullet list covering all meaningful changes.
 
 Rules:
 
-- Inspect staged changes only.
-- Never run `git add`, commit, or push.
-- Allowed git commands are read-only (`git status`, `git diff`, `git log`, `git show`).
-- If `AGENTS.md` includes changelog directives, follow them.
-- Keep a Changelog structure and do not rewrite historical releases unless explicitly requested.
-- In monorepos, group entries by package, then by feature.
-- User-facing entries must be clear for both beginners and experts.
-- Keep entries concise, actionable, and deduplicated.
-- Ignore documentation-only or ancillary resource changes (for example `docs/`, `README*`, guides, images, assets, notes).
-- If nothing is staged, do not edit changelog files.
-
-Type mapping:
-
-- `feat`, `add`, `new` -> Added
-- `fix` -> Fixed
-- `refactor`, `perf` -> Changed
-- `chore`, `build`, `ci`, `test` -> Changed only when user-impacting; otherwise ignore
+- Inspect staged changes only (`git diff --cached`). If nothing is staged, say so and stop.
+- Never run `git add`, commit, or push. Allowed git commands are read-only (`git status`, `git diff`, `git log`, `git show`).
+- If `AGENTS.md` exists and contains commit message directives, follow them.
+- Use conventional commit prefixes: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`, `ci`, `build`.
+- Do not invent information: only describe what the code actually does.
+- Keep the message concise, accurate, and focused on the "why" over the "what".
 
 Output:
 
-- Clean diff on updated changelog file(s).
-- 3-5 bullet recap of what changed and why.
+- The commit message in the requested format (default: `normal`).

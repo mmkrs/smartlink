@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-02-27
+
 ### Added
 
 - Global distribution step in `setup.sh` and `setup.ps1`: generated files are now symlinked (or copied as fallback) to each tool's global config directory (`~/.config/opencode/`, `~/.claude/`, `~/.cursor/`)
@@ -14,10 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Safe backup logic: existing files at global targets are backed up with `.bak.YYYYMMDD-HHMMSS` before replacement
 - Idempotent global step: skips files that already match (symlink target or file content)
 - VS Code reminder printed at the end of setup (no global dir; requires `chat.agentFilesLocations` setting)
+- `/commit` command: proposes a commit message from staged changes in `short`, `normal`, or `verbose` format following conventional commit conventions
+- `/documentation` command: analyses staged changes and updates affected documentation files (`README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, `docs/`, etc.)
 
 ### Changed
 
-- Refined changelog command wording: `/changelog` mode now reads "create or update" `[Unreleased]`
+- `/changelog` command: clarified mode descriptions (`create or update [Unreleased]`) and removed stale commit-message options from the output spec (that responsibility now lives in `/commit`)
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 ---
-name: changelog
-description: Update changelog files from staged git changes
-argument-hint: "[version|help]"
+name: documentation
+description: Update repo documentation from staged git changes
+argument-hint: "[help]"
 
 # ==================================================================================
 # SINGLE SOURCE - COMMAND CONFIG CATALOG (commented examples)
@@ -49,39 +49,32 @@ claude.disable-model-invocation: true
 # vscode.agent: agent
 # vscode.model: ['GPT-5.2','Claude Sonnet 4.5']
 # vscode.tools: ['search','read','editFiles','terminalLastCommand','githubRepo','my-mcp/*']
-# vscode.extra.name: changelog
-# vscode.extra.description: Update changelog files from staged git changes
+# vscode.extra.name: documentation
+# vscode.extra.description: Update repo documentation from staged git changes
 vscode.agent: agent
 ---
-Goal: update changelog file(s) from staged git changes only.
+Goal: update the repository's documentation files so they accurately reflect staged git changes. Be concise but complete.
 
 Modes:
 
-- `/changelog help` or `--help`: return a short usage guide and stop (no file edits).
-- `/changelog`: create or update `## [Unreleased]` only.
-- `/changelog <version>`: create/update `## [<version>] - YYYY-MM-DD` from `[Unreleased]`.
+- `/documentation help` or `--help`: return a short usage guide and stop (no file edits).
+- `/documentation`: analyse staged changes and update all relevant doc files.
 
 Rules:
 
-- Inspect staged changes only.
-- Never run `git add`, commit, or push.
-- Allowed git commands are read-only (`git status`, `git diff`, `git log`, `git show`).
-- If `AGENTS.md` includes changelog directives, follow them.
-- Keep a Changelog structure and do not rewrite historical releases unless explicitly requested.
-- In monorepos, group entries by package, then by feature.
-- User-facing entries must be clear for both beginners and experts.
-- Keep entries concise, actionable, and deduplicated.
-- Ignore documentation-only or ancillary resource changes (for example `docs/`, `README*`, guides, images, assets, notes).
-- If nothing is staged, do not edit changelog files.
-
-Type mapping:
-
-- `feat`, `add`, `new` -> Added
-- `fix` -> Fixed
-- `refactor`, `perf` -> Changed
-- `chore`, `build`, `ci`, `test` -> Changed only when user-impacting; otherwise ignore
+- Inspect staged changes only (`git diff --cached`). If nothing is staged, stop and say so — do not edit any file.
+- Never run `git add`, commit, or push. Allowed git commands are read-only (`git status`, `git diff`, `git log`, `git show`).
+- If `AGENTS.md` exists and contains documentation directives, follow them strictly.
+- Documentation files to consider: `README.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md`, inline doc headers, usage examples, CLI help text, and any file under `docs/`.
+- Only update sections affected by the staged changes. Do not rewrite unrelated sections.
+- Keep language concise, precise, and accessible to both beginners and experts.
+- Preserve the existing tone and structure of each doc file.
+- In monorepos, scope updates to the packages touched by the staged changes.
+- If a new feature or command is staged but not yet documented, add the missing section.
+- If a feature or command is removed in staged changes, remove or mark its documentation accordingly.
+- Do not invent information: only document what the code actually does.
 
 Output:
 
-- Clean diff on updated changelog file(s).
-- 3-5 bullet recap of what changed and why.
+- Clean diff on every documentation file updated.
+- 3-5 bullet recap of what was updated and why.
