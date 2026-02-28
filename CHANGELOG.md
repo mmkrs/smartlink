@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-02-28
+
+### Changed
+
+- `web-researcher` agent (`pack/shared/agents/web-researcher.md`): updated opencode model from `claude-haiku-4-20250514` to `claude-haiku-4-5`; narrowed VS Code model list to `Claude Haiku 4.5 (copilot)` only (previously included `Claude Sonnet 4.5` and `GPT-5.2`)
+
 ## [0.0.4] - 2026-02-27
 
 ### Added

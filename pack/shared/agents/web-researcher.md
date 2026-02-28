@@ -33,7 +33,7 @@ description: Deep web research agent — iterative search, analysis, and synthes
 # opencode.color: accent
 # opencode.top_p: 0.9
 opencode.mode: subagent
-opencode.model: anthropic/claude-haiku-4-20250514
+opencode.model: anthropic/claude-haiku-4-5
 opencode.temperature: 0.2
 opencode.steps: 20
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}
@@ -74,7 +74,7 @@ cursor.is_background: false
 # vscode.mcp-servers: [{"name":"searxng","command":"npx","args":["-y","@searxng/mcp"]}]
 # vscode.handoffs: []
 vscode.tools: ['fetch','search','readFile','textSearch','agent','searxng/*']
-vscode.model: ['Claude Sonnet 4.5','GPT-5.2']
+vscode.model: ['Claude Haiku 4.5 (copilot)']
 vscode.user-invokable: true
 vscode.disable-model-invocation: false
 ---
