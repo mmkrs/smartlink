@@ -549,71 +549,62 @@ SHARED_MCP_FILE="$ROOT/pack/shared/mcp.json"
 MCP_GENERATED=0
 
 if [ -f "$SHARED_MCP_FILE" ]; then
-  if ! command -v python3 &>/dev/null; then
-    printf 'WARN  python3 not found — skipping MCP config generation.\n' >&2
+  if ! command -v node &>/dev/null; then
+    printf 'WARN  node not found — skipping MCP config generation.\n' >&2
   else
     MCP_GENERATED=1
 
-    # Single Python transform: canonical type → per-tool format
+    # Single Node.js transform: canonical type → per-tool format
     # type "stdio" (default) = local subprocess
     # type "http"            = streamable HTTP (recommended for remote)
     # type "sse"             = legacy SSE remote
-    _mcp_py="$(mktemp)"
-    cat > "$_mcp_py" << 'PYEOF'
-import json, sys, collections
+    _mcp_js="$(mktemp)"
+    cat > "$_mcp_js" << 'JSEOF'
+const fs = require('fs');
+const src = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const claude = {}, cursor = {}, vscode = {}, opencode = {};
 
-with open(sys.argv[1]) as f:
-    src = json.load(f, object_pairs_hook=collections.OrderedDict)
+for (const [name, srv] of Object.entries(src)) {
+  const ct = (srv.type || (srv.url ? 'http' : 'stdio')).trim();
+  if (ct === 'stdio') {
+    const e = {};
+    if (srv.command) e.command = srv.command;
+    if (srv.args)    e.args = [...srv.args];
+    if (srv.env)     e.env = srv.env;
+    claude[name] = cursor[name] = vscode[name] = e;
+    const oc = { type: 'local' };
+    oc.command = [...(srv.command ? [srv.command] : []), ...(srv.args || [])];
+    if (srv.env) oc.environment = srv.env;
+    opencode[name] = oc;
+  } else {
+    const h = srv.headers;
+    const cc = { type: ct };
+    if (srv.url) cc.url = srv.url;
+    if (h)       cc.headers = h;
+    claude[name] = vscode[name] = cc;
+    const cu = {};
+    if (srv.url) cu.url = srv.url;
+    if (h)       cu.headers = h;
+    cursor[name] = cu;
+    const oc = { type: 'remote' };
+    if (srv.url) oc.url = srv.url;
+    if (h)       oc.headers = h;
+    opencode[name] = oc;
+  }
+}
 
-claude = collections.OrderedDict()
-cursor = collections.OrderedDict()
-vscode = collections.OrderedDict()
-opencode = collections.OrderedDict()
+const fmt = process.argv[3];
+if (fmt === 'claude')   console.log(JSON.stringify({ mcpServers: claude }, null, 2));
+if (fmt === 'cursor')   console.log(JSON.stringify({ mcpServers: cursor }, null, 2));
+if (fmt === 'vscode')   console.log(JSON.stringify({ servers:    vscode }, null, 2));
+if (fmt === 'opencode') console.log(JSON.stringify(opencode, null, 2));
+JSEOF
 
-for name, srv in src.items():
-    ct = (srv.get('type') or ('http' if 'url' in srv else 'stdio')).strip()
-    if ct == 'stdio':
-        # Claude / Cursor / VS Code: command (string) + args (array) + env
-        e = collections.OrderedDict()
-        if 'command' in srv: e['command'] = srv['command']
-        if 'args'    in srv: e['args']    = list(srv['args'])
-        if 'env'     in srv: e['env']     = srv['env']
-        claude[name] = cursor[name] = vscode[name] = e
-        # OpenCode: type=local, command=[cmd, ...args], environment
-        oc = collections.OrderedDict({'type': 'local'})
-        oc['command'] = ([srv['command']] if 'command' in srv else []) + list(srv.get('args', []))
-        if 'env' in srv: oc['environment'] = srv['env']
-        opencode[name] = oc
-    else:
-        h = srv.get('headers')
-        # Claude / VS Code: explicit type (http|sse), url, headers
-        cc = collections.OrderedDict({'type': ct})
-        if 'url' in srv: cc['url'] = srv['url']
-        if h:            cc['headers'] = h
-        claude[name] = vscode[name] = cc
-        # Cursor: no type field (auto-detected from url), url, headers
-        cu = collections.OrderedDict()
-        if 'url' in srv: cu['url'] = srv['url']
-        if h:            cu['headers'] = h
-        cursor[name] = cu
-        # OpenCode: type=remote (single value for all remote transports), url, headers
-        oc = collections.OrderedDict({'type': 'remote'})
-        if 'url' in srv: oc['url'] = srv['url']
-        if h:            oc['headers'] = h
-        opencode[name] = oc
-
-fmt = sys.argv[2]
-if fmt == 'claude':   print(json.dumps({'mcpServers': claude},  indent=2))
-if fmt == 'cursor':   print(json.dumps({'mcpServers': cursor},  indent=2))
-if fmt == 'vscode':   print(json.dumps({'servers':    vscode},  indent=2))
-if fmt == 'opencode': print(json.dumps(opencode,                indent=2))
-PYEOF
-
-    claude_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" claude)"
-    cursor_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" cursor)"
-    vscode_mcp_json="$(python3   "$_mcp_py" "$SHARED_MCP_FILE" vscode)"
-    opencode_mcp_json="$(python3 "$_mcp_py" "$SHARED_MCP_FILE" opencode)"
-    rm -f "$_mcp_py"
+    claude_mcp_json="$(node   "$_mcp_js" "$SHARED_MCP_FILE" claude)"
+    cursor_mcp_json="$(node   "$_mcp_js" "$SHARED_MCP_FILE" cursor)"
+    vscode_mcp_json="$(node   "$_mcp_js" "$SHARED_MCP_FILE" vscode)"
+    opencode_mcp_json="$(node "$_mcp_js" "$SHARED_MCP_FILE" opencode)"
+    rm -f "$_mcp_js"
 
     # Write project-level MCP configs
     write_if_changed "$ROOT/.mcp.json"        "$claude_mcp_json"$'\n'
@@ -722,17 +713,13 @@ if [ "$MCP_GENERATED" -eq 1 ]; then
 
   # Claude Code: merge mcpServers key into ~/.claude.json
   claude_json_path="$HOME/.claude.json"
-  new_claude_json="$(python3 -c "
-import json, sys, collections
-existing = collections.OrderedDict()
-try:
-    with open(sys.argv[1]) as f:
-        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
-mcp = json.loads(sys.argv[2])
-existing['mcpServers'] = mcp['mcpServers']
-print(json.dumps(existing, indent=2))
+  new_claude_json="$(node -e "
+const fs = require('fs');
+let existing = {};
+try { existing = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); } catch {}
+const mcp = JSON.parse(process.argv[2]);
+existing.mcpServers = mcp.mcpServers;
+console.log(JSON.stringify(existing, null, 2));
 " "$claude_json_path" "$claude_mcp_json" 2>/dev/null || echo "$claude_mcp_json")"
 
   tmp_claude="$(mktemp)"
@@ -755,17 +742,12 @@ print(json.dumps(existing, indent=2))
 
   # OpenCode: merge mcp key into ~/.config/opencode/opencode.json
   oc_global_path="$OPENCODE_GLOBAL/opencode.json"
-  new_oc_json="$(python3 -c "
-import json, sys, collections
-existing = collections.OrderedDict()
-try:
-    with open(sys.argv[1]) as f:
-        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
-mcp = json.loads(sys.argv[2])
-existing['mcp'] = mcp
-print(json.dumps(existing, indent=2))
+  new_oc_json="$(node -e "
+const fs = require('fs');
+let existing = {};
+try { existing = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); } catch {}
+existing.mcp = JSON.parse(process.argv[2]);
+console.log(JSON.stringify(existing, null, 2));
 " "$oc_global_path" "$opencode_mcp_json" 2>/dev/null || printf '{"mcp": %s}' "$opencode_mcp_json")"
 
   mkdir -p "$OPENCODE_GLOBAL"
@@ -806,33 +788,27 @@ done
 # ── VS Code: update global settings.json for agents + skills ─────────
 if [ -d "$VSCODE_GLOBAL" ]; then
   vscode_settings_path="$VSCODE_GLOBAL/settings.json"
-  if command -v python3 &>/dev/null; then
+  if command -v node &>/dev/null; then
     _skills_arg=""
     [ "$skill_count" -gt 0 ] && _skills_arg="$ROOT/.github/skills"
 
-    new_vscode_settings="$(python3 - "$vscode_settings_path" "$ROOT/.github/agents" "$_skills_arg" <<'PYEOF'
-import json, sys, collections
-settings_path, agents_path, skills_path = sys.argv[1], sys.argv[2], sys.argv[3]
-existing = collections.OrderedDict()
-try:
-    with open(settings_path) as f:
-        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
-key = 'chat.agentFilesLocations'
-arr = list(existing.get(key) or [])
-if agents_path not in arr:
-    arr.append(agents_path)
-existing[key] = arr
-if skills_path:
-    key2 = 'chat.agentSkillsLocations'
-    arr2 = list(existing.get(key2) or [])
-    if skills_path not in arr2:
-        arr2.append(skills_path)
-    existing[key2] = arr2
-print(json.dumps(existing, indent=2))
-PYEOF
-)"
+    new_vscode_settings="$(node -e "
+const fs = require('fs');
+const [settingsPath, agentsPath, skillsPath] = process.argv.slice(1);
+let existing = {};
+try { existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch {}
+const key = 'chat.agentFilesLocations';
+const arr = Array.isArray(existing[key]) ? [...existing[key]] : [];
+if (!arr.includes(agentsPath)) arr.push(agentsPath);
+existing[key] = arr;
+if (skillsPath) {
+  const key2 = 'chat.agentSkillsLocations';
+  const arr2 = Array.isArray(existing[key2]) ? [...existing[key2]] : [];
+  if (!arr2.includes(skillsPath)) arr2.push(skillsPath);
+  existing[key2] = arr2;
+}
+console.log(JSON.stringify(existing, null, 2));
+" "$vscode_settings_path" "$ROOT/.github/agents" "$_skills_arg")"
     if [ -n "$new_vscode_settings" ]; then
       tmp_vscode="$(mktemp)"
       printf '%s\n' "$new_vscode_settings" > "$tmp_vscode"
@@ -847,7 +823,7 @@ PYEOF
       rm -f "$tmp_vscode" 2>/dev/null
     fi
   else
-    printf 'skip  VS Code settings.json — python3 not found\n'
+    printf 'skip  VS Code settings.json — node not found\n'
   fi
 else
   printf 'skip  VS Code not found at %s\n' "$VSCODE_GLOBAL"

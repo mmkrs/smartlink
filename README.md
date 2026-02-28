@@ -15,7 +15,7 @@ setup.cmd             <-- generates + deploys everything
 ## Quick start
 
 ```bash
-# Linux / macOS / WSL  (needs python3 for MCP generation)
+# Linux / macOS / WSL
 ./setup.sh
 
 # Windows

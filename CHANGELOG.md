@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-02-28
+
+### Changed
+
+- `setup.sh`: replaced all inline Python 3 scripts with Node.js equivalents for MCP config generation, global JSON merges (`~/.claude.json`, `opencode.json`), and VS Code `settings.json` updates — Python is no longer required on Linux/macOS/WSL since Node.js is already an implicit dependency (used by `npx` for MCP servers)
+
 ## [0.0.6] - 2026-02-28
 
 ### Added
