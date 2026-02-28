@@ -4,6 +4,7 @@
 .opencode/
 .github/prompts/*.prompt.md
 .github/agents/*.agent.md
+.github/skills/
 
 # Generated MCP configs (source is pack/shared/mcp.json)
 .mcp.json

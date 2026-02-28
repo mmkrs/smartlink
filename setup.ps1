@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SharedCommandsDir = Join-Path $Root "pack/shared/commands"
-$SharedAgentsDir = Join-Path $Root "pack/shared/agents"
+$SharedAgentsDir   = Join-Path $Root "pack/shared/agents"
+$SharedSkillsDir   = Join-Path $Root "pack/shared/skills"
 
 function Quote-Yaml {
     param([string]$Value)
@@ -250,8 +251,15 @@ if (Test-Path -LiteralPath $SharedAgentsDir) {
     $agentFiles = Get-ChildItem -LiteralPath $SharedAgentsDir -Filter "*.md" -File | Sort-Object Name
 }
 
-if ($commandFiles.Count -eq 0 -and $agentFiles.Count -eq 0) {
-    Write-Error "Nothing to generate. Add canonical files in pack/shared/commands and pack/shared/agents."
+$skillDirs = @()
+if (Test-Path -LiteralPath $SharedSkillsDir) {
+    $skillDirs = Get-ChildItem -LiteralPath $SharedSkillsDir -Directory | Where-Object {
+        Test-Path (Join-Path $_.FullName "SKILL.md")
+    } | Sort-Object Name
+}
+
+if ($commandFiles.Count -eq 0 -and $agentFiles.Count -eq 0 -and $skillDirs.Count -eq 0) {
+    Write-Error "Nothing to generate. Add canonical files in pack/shared/commands, pack/shared/agents, or pack/shared/skills/<name>/SKILL.md."
     exit 1
 }
 
@@ -431,6 +439,64 @@ foreach ($file in $agentFiles) {
             Path = Join-Path $Root ".github/agents/$($doc.Name).agent.md"
             Content = With-Frontmatter -Entries $vsCodeEntries -Body $doc.Body
         })
+}
+
+# ── Skills generation ─────────────────────────────────────────────────
+foreach ($skillDir in $skillDirs) {
+    $skillFile = Join-Path $skillDir.FullName "SKILL.md"
+    $doc  = Parse-CanonicalDoc -Path $skillFile
+    $meta = $doc.Metadata
+    $name = $doc.Name
+
+    # Claude Code
+    $claudeSkillEntries = @(
+        @{ Key = "name";        Value = $name },
+        @{ Key = "description"; Value = $doc.Description }
+    )
+    Add-OptionalEntry -Entries ([ref]$claudeSkillEntries) -Key "allowed-tools"            -Value (Resolve-AgentValue -Metadata $meta -Tool "claude" -Field "allowed-tools")
+    Add-OptionalEntry -Entries ([ref]$claudeSkillEntries) -Key "disable-model-invocation" -Value (Resolve-AgentValue -Metadata $meta -Tool "claude" -Field "disable-model-invocation")
+    Add-OptionalEntry -Entries ([ref]$claudeSkillEntries) -Key "model"                    -Value (Resolve-AgentValue -Metadata $meta -Tool "claude" -Field "model")
+    Add-ExtraEntries  -Entries ([ref]$claudeSkillEntries) -Metadata $meta -Prefix "claude.extra."
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".claude/skills/$name/SKILL.md"
+        Content = With-Frontmatter -Entries $claudeSkillEntries -Body $doc.Body
+    })
+
+    # Cursor
+    $cursorSkillEntries = @(
+        @{ Key = "name";        Value = $name },
+        @{ Key = "description"; Value = $doc.Description }
+    )
+    Add-ExtraEntries -Entries ([ref]$cursorSkillEntries) -Metadata $meta -Prefix "cursor.extra."
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".cursor/skills/$name/SKILL.md"
+        Content = With-Frontmatter -Entries $cursorSkillEntries -Body $doc.Body
+    })
+
+    # OpenCode
+    $openCodeSkillEntries = @(
+        @{ Key = "name";        Value = $name },
+        @{ Key = "description"; Value = $doc.Description }
+    )
+    Add-OptionalEntry -Entries ([ref]$openCodeSkillEntries) -Key "permission" -Value (Resolve-AgentValue -Metadata $meta -Tool "opencode" -Field "permission")
+    Add-ExtraEntries  -Entries ([ref]$openCodeSkillEntries) -Metadata $meta -Prefix "opencode.extra."
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".opencode/skills/$name/SKILL.md"
+        Content = With-Frontmatter -Entries $openCodeSkillEntries -Body $doc.Body
+    })
+
+    # VS Code (.github/skills/)
+    $vsCodeSkillEntries = @(
+        @{ Key = "name";        Value = $name },
+        @{ Key = "description"; Value = $doc.Description }
+    )
+    Add-OptionalEntry -Entries ([ref]$vsCodeSkillEntries) -Key "user-invokable"            -Value (Resolve-AgentValue -Metadata $meta -Tool "vscode" -Field "user-invokable")
+    Add-OptionalEntry -Entries ([ref]$vsCodeSkillEntries) -Key "disable-model-invocation"  -Value (Resolve-AgentValue -Metadata $meta -Tool "vscode" -Field "disable-model-invocation")
+    Add-ExtraEntries  -Entries ([ref]$vsCodeSkillEntries) -Metadata $meta -Prefix "vscode.extra."
+    $outputs.Add([pscustomobject]@{
+        Path    = Join-Path $Root ".github/skills/$name/SKILL.md"
+        Content = With-Frontmatter -Entries $vsCodeSkillEntries -Body $doc.Body
+    })
 }
 
 # ── MCP config generation ────────────────────────────────────────────
@@ -660,25 +726,26 @@ foreach ($file in $commandFiles) {
     Safe-Symlink -Source (Join-Path $Root ".cursor/commands/$name.md") -Target (Join-Path $CursorGlobal "commands/$name.md")
 }
 
+# Helper: convert PSCustomObject to ordered hashtable (PS 5.1 compat)
+# Defined here so it is available for both MCP merge and VS Code settings update.
+function ConvertTo-OrderedHash {
+    param($InputObject)
+    if ($null -eq $InputObject) { return [ordered]@{} }
+    $hash = [ordered]@{}
+    foreach ($prop in $InputObject.PSObject.Properties) {
+        if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
+            $hash[$prop.Name] = ConvertTo-OrderedHash $prop.Value
+        } elseif ($prop.Value -is [System.Array]) {
+            $hash[$prop.Name] = @($prop.Value)
+        } else {
+            $hash[$prop.Name] = $prop.Value
+        }
+    }
+    return $hash
+}
+
 # Symlink MCP configs
 if (Test-Path -LiteralPath $SharedMcpFile) {
-
-    # Helper: convert PSCustomObject to ordered hashtable (PS 5.1 compat)
-    function ConvertTo-OrderedHash {
-        param($InputObject)
-        if ($null -eq $InputObject) { return [ordered]@{} }
-        $hash = [ordered]@{}
-        foreach ($prop in $InputObject.PSObject.Properties) {
-            if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
-                $hash[$prop.Name] = ConvertTo-OrderedHash $prop.Value
-            } elseif ($prop.Value -is [System.Array]) {
-                $hash[$prop.Name] = @($prop.Value)
-            } else {
-                $hash[$prop.Name] = $prop.Value
-            }
-        }
-        return $hash
-    }
 
     # Claude Code: .mcp.json is project-only, global goes into ~/.claude.json mcpServers key
     $claudeJsonPath = Join-Path $HomePath ".claude.json"
@@ -743,6 +810,80 @@ foreach ($file in $agentFiles) {
     Safe-Symlink -Source (Join-Path $Root ".cursor/agents/$name.md") -Target (Join-Path $CursorGlobal "agents/$name.md")
 }
 
+# Symlink skills globally
+foreach ($skillDir in $skillDirs) {
+    $name = $skillDir.Name
+    Safe-Symlink -Source (Join-Path $Root ".claude/skills/$name/SKILL.md")    -Target (Join-Path $ClaudeGlobal    "skills/$name/SKILL.md")
+    Safe-Symlink -Source (Join-Path $Root ".opencode/skills/$name/SKILL.md")  -Target (Join-Path $OpenCodeGlobal  "skills/$name/SKILL.md")
+    Safe-Symlink -Source (Join-Path $Root ".cursor/skills/$name/SKILL.md")    -Target (Join-Path $CursorGlobal    "skills/$name/SKILL.md")
+}
+
+# ── VS Code: update global settings.json for agents + skills ─────────
+if (Test-Path -LiteralPath $VSCodeGlobal) {
+    $vsCodeSettingsPath = Join-Path $VSCodeGlobal "settings.json"
+    $vsCodeSettingsObj  = [ordered]@{}
+    $vsCodeSettingsOk   = $true
+
+    if (Test-Path -LiteralPath $vsCodeSettingsPath) {
+        try {
+            $parsed = [System.IO.File]::ReadAllText($vsCodeSettingsPath) | ConvertFrom-Json
+            $vsCodeSettingsObj = ConvertTo-OrderedHash $parsed
+        } catch {
+            Write-Host "WARN  Could not parse VS Code settings.json — skipping settings update."
+            $vsCodeSettingsOk = $false
+        }
+    }
+
+    if ($vsCodeSettingsOk) {
+        # chat.agentFilesLocations — add .github/agents as a persistent global source
+        $agentLocKey = "chat.agentFilesLocations"
+        $agentLocArr = @()
+        if ($vsCodeSettingsObj.Contains($agentLocKey)) {
+            $existing = $vsCodeSettingsObj[$agentLocKey]
+            if ($existing -is [System.Array] -or $existing -is [System.Collections.IEnumerable]) {
+                $agentLocArr = @($existing | ForEach-Object { "$_" })
+            }
+        }
+        $githubAgentsPath = (Join-Path $Root ".github" "agents").Replace('\', '/')
+        if ($agentLocArr -notcontains $githubAgentsPath) {
+            $agentLocArr += $githubAgentsPath
+        }
+        $vsCodeSettingsObj[$agentLocKey] = $agentLocArr
+
+        # chat.agentSkillsLocations — add .github/skills if skills are present
+        if ($skillDirs.Count -gt 0) {
+            $skillLocKey = "chat.agentSkillsLocations"
+            $skillLocArr = @()
+            if ($vsCodeSettingsObj.Contains($skillLocKey)) {
+                $existing = $vsCodeSettingsObj[$skillLocKey]
+                if ($existing -is [System.Array] -or $existing -is [System.Collections.IEnumerable]) {
+                    $skillLocArr = @($existing | ForEach-Object { "$_" })
+                }
+            }
+            $githubSkillsPath = (Join-Path $Root ".github" "skills").Replace('\', '/')
+            if ($skillLocArr -notcontains $githubSkillsPath) {
+                $skillLocArr += $githubSkillsPath
+            }
+            $vsCodeSettingsObj[$skillLocKey] = $skillLocArr
+        }
+
+        $newVsCodeSettings = ($vsCodeSettingsObj | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+        $newVsCodeSettings = "$newVsCodeSettings`n"
+        $vsCodeSettingsStatus = "write"
+        if (Test-Path -LiteralPath $vsCodeSettingsPath) {
+            $existVsCode = ([System.IO.File]::ReadAllText($vsCodeSettingsPath)) -replace "`r`n", "`n"
+            if ($existVsCode -ceq $newVsCodeSettings) { $vsCodeSettingsStatus = "ok" }
+        }
+        if ($vsCodeSettingsStatus -eq "write") {
+            [System.IO.File]::WriteAllText($vsCodeSettingsPath, $newVsCodeSettings, [System.Text.UTF8Encoding]::new($false))
+        }
+        Write-Host ("{0,-5} %APPDATA%/Code/User/settings.json (chat.agentFilesLocations)" -f $vsCodeSettingsStatus)
+        if ($vsCodeSettingsStatus -eq "write") { $script:copied++ } else { $script:linkSkipped++ }
+    }
+} else {
+    Write-Host "skip  VS Code not found at $VSCodeGlobal"
+}
+
 Write-Host ""
 Write-Host "Symlink summary:"
 if ($symlinked -gt 0) {
@@ -763,19 +904,29 @@ if ($symlinkFailed) {
 }
 
 Write-Host ""
-Write-Host "Isolation report:"
-Write-Host "- OpenCode reads .opencode/commands, .opencode/agents, and mcp from opencode.json."
-Write-Host "- Claude Code reads .claude/commands, .claude/agents, and .mcp.json."
-Write-Host "- Cursor reads .cursor/commands, .cursor/agents, and .cursor/mcp.json."
-Write-Host "- VS Code Copilot reads .github/prompts, .github/agents, and .vscode/mcp.json."
-Write-Host "- All generated from the same canonical source in pack/shared/."
+Write-Host "Global deployment summary (all 4 tools):"
 Write-Host ""
-Write-Host "MCP servers:"
-Write-Host "- Claude Code: .mcp.json (project) + ~/.claude.json mcpServers (global)"
-Write-Host "- Cursor: .cursor/mcp.json (project) + ~/.cursor/mcp.json (global, symlinked)"
-Write-Host "- OpenCode: mcp key merged into ~/.config/opencode/opencode.json (global)"
-Write-Host "- VS Code: .vscode/mcp.json (project) + %APPDATA%/Code/User/mcp.json (global, symlinked)"
+Write-Host "  OpenCode"
+Write-Host "    workspace : .opencode/commands  .opencode/agents  .opencode/skills"
+Write-Host "    global    : ~/.config/opencode/commands  agents  skills  (symlinked)"
+Write-Host "    MCP       : mcp key merged into ~/.config/opencode/opencode.json"
 Write-Host ""
-Write-Host "NOTE: VS Code has no fixed global config directory for prompts/agents."
-Write-Host "      To use generated prompts/agents globally, add this to your VS Code settings.json:"
-Write-Host "        `"chat.agentFilesLocations`": { `"$Root/.github`": true }"
+Write-Host "  Claude Code"
+Write-Host "    workspace : .claude/commands  .claude/agents  .claude/skills  .mcp.json"
+Write-Host "    global    : ~/.claude/commands  agents  skills  (symlinked)"
+Write-Host "    MCP       : mcpServers merged into ~/.claude.json"
+Write-Host ""
+Write-Host "  Cursor"
+Write-Host "    workspace : .cursor/commands  .cursor/agents  .cursor/skills  .cursor/mcp.json"
+Write-Host "    global    : ~/.cursor/commands  agents  skills  mcp.json  (symlinked)"
+Write-Host ""
+Write-Host "  VS Code Copilot"
+Write-Host "    workspace : .github/prompts  .github/agents  .github/skills  .vscode/mcp.json"
+Write-Host "    global MCP: %APPDATA%/Code/User/mcp.json  (symlinked)"
+Write-Host "    global agents/skills: %APPDATA%/Code/User/settings.json"
+Write-Host "      chat.agentFilesLocations  -> .github/agents"
+if ($skillDirs.Count -gt 0) {
+Write-Host "      chat.agentSkillsLocations -> .github/skills"
+}
+Write-Host ""
+Write-Host "  All generated from the same canonical source in pack/shared/."

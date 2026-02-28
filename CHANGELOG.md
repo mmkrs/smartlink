@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-02-28
+
+### Added
+
+- Skills pipeline (`pack/shared/skills/<name>/SKILL.md`): new resource type following the open Agent Skills standard; setup generates per-tool skill files (`.claude/skills/`, `.cursor/skills/`, `.opencode/skills/`, `.github/skills/`) and symlinks them globally (`~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.cursor/skills/`)
+- VS Code global deployment for agents and skills: setup now updates `%APPDATA%/Code/User/settings.json` with `chat.agentFilesLocations` and `chat.agentSkillsLocations` so agents and skills are available in every workspace
+- `.github/skills/` added to `.gitignore`
+
+### Changed
+
+- `ConvertTo-OrderedHash` helper moved out of the MCP `if` block in `setup.ps1` so it is available unconditionally (fixes a crash when `pack/shared/mcp.json` is absent but VS Code settings update runs)
+- Final report in both `setup.ps1` and `setup.sh` replaced with a comprehensive "Global deployment summary" covering all 4 resource types across all 4 tools
+- README rewritten from scratch: concise structure covering commands, agents, skills, and MCP with per-tool frontmatter key catalogs, generation/deployment tables, and a quick-start guide
+
 ## [0.0.5] - 2026-02-28
 
 ### Changed

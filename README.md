@@ -1,142 +1,265 @@
-# Smartlink Prompt Pack
+# Smartlink
 
-Single-source management for commands (slash prompts), subagents, and MCP servers across 4 AI tools simultaneously: **Claude Code**, **Cursor**, **OpenCode**, and **VS Code Copilot**.
+Write commands, agents, skills, and MCP server configs **once** — deploy them to **Claude Code**, **Cursor**, **OpenCode**, and **VS Code Copilot** simultaneously, both at project level and globally on your machine.
 
-Everything is defined once in `pack/shared/`. Running `setup` generates and deploys tool-specific files both locally (project-level) and globally (user-level).
+```
+pack/shared/          <-- you edit here (single source of truth)
+  commands/*.md
+  agents/*.md
+  skills/<name>/SKILL.md
+  mcp.json
 
-## Canonical sources (only files to maintain)
-
-**Commands:**
-- `pack/shared/commands/changelog.md`
-- `pack/shared/commands/commit.md`
-- `pack/shared/commands/documentation.md`
-- `pack/shared/commands/resolve-conflicts.md`
-
-**Agents:**
-- `pack/shared/agents/frontend-ui.md`
-- `pack/shared/agents/web-researcher.md`
-
-**MCP servers:**
-- `pack/shared/mcp.json`
-
-## Run setup
-
-Linux/macOS/WSL (requires `python3` for MCP generation):
-
-```bash
-./setup.sh
+setup.cmd             <-- generates + deploys everything
 ```
 
-Windows:
+## Quick start
 
-```bat
+```bash
+# Linux / macOS / WSL  (needs python3 for MCP generation)
+./setup.sh
+
+# Windows
 setup.cmd
 ```
 
-Direct PowerShell:
+Setup does two things:
 
-```powershell
-.\setup.ps1
-```
+1. **Generates** tool-specific files in `.claude/`, `.cursor/`, `.opencode/`, `.github/`, `.vscode/`
+2. **Deploys globally** via symlinks (or copy fallback) so every project on your machine gets them
 
-## Generated project-level outputs
+## How it works
 
-Commands (4 tools × 4 commands):
-- `.claude/commands/<name>.md`
-- `.cursor/commands/<name>.md`
-- `.opencode/commands/<name>.md`
-- `.github/prompts/<name>.prompt.md`
+Each resource type lives in `pack/shared/` as a single markdown file with YAML frontmatter. Setup reads the frontmatter, extracts per-tool overrides, and writes the correct format for each tool.
 
-Agents (4 tools × 2 agents):
-- `.claude/agents/<name>.md`
-- `.cursor/agents/<name>.md`
-- `.opencode/agents/<name>.md`
-- `.github/agents/<name>.agent.md`
+### Frontmatter namespacing
 
-MCP configs (project-level):
-- `.mcp.json` — Claude Code format (`mcpServers`)
-- `.cursor/mcp.json` — Cursor format (`mcpServers`)
-- `.vscode/mcp.json` — VS Code format (`servers`)
+Every canonical file uses prefixed keys to target specific tools:
 
-All generated files are gitignored. Only `pack/shared/` is committed.
-
-## Global deployment (done by setup)
-
-Setup also deploys/symlinks globally so every project on the machine gets the agents, commands, and MCP servers automatically:
-
-| Tool | Commands | Agents | MCP |
-|---|---|---|---|
-| Claude Code | `~/.claude/commands/` | `~/.claude/agents/` | `~/.claude.json` → `mcpServers` key |
-| Cursor | `~/.cursor/commands/` | `~/.cursor/agents/` | `~/.cursor/mcp.json` |
-| OpenCode | `~/.config/opencode/commands/` | `~/.config/opencode/agents/` | `~/.config/opencode/opencode.json` → `mcp` key |
-| VS Code | *(no global path)* | *(no global path)* | `%APPDATA%/Code/User/mcp.json` (Win) / `~/Library/Application Support/Code/User/mcp.json` (macOS) / `~/.config/Code/User/mcp.json` (Linux) |
-
-For VS Code global prompts/agents (no fixed directory), add to `settings.json`:
-```json
-"chat.agentFilesLocations": { "/path/to/smartlink/.github": true }
-```
-
-## Frontmatter convention
-
-Both commands and agents use a single canonical `.md` file with a namespaced frontmatter header.
-
-**Namespace prefixes:**
-- `common.<field>` — shared fallback for all tools
-- `claude.<field>` — Claude Code override
-- `cursor.<field>` — Cursor override
-- `opencode.<field>` — OpenCode override
-- `vscode.<field>` — VS Code Copilot override
-- `<tool>.extra.<field>` — free pass-through (forwarded as-is)
-
-**Example agent header:**
 ```yaml
 ---
-name: my-agent
-description: Does something useful
+name: my-resource
+description: What it does
+
+# Shared fallback (used when a tool-specific key is absent)
+common.model: inherit
+
+# Per-tool overrides
 claude.model: haiku
-claude.maxTurns: 20
-claude.mcpServers: ["searxng"]
-opencode.model: anthropic/claude-haiku-4-20250514
-opencode.mode: subagent
+opencode.model: anthropic/claude-haiku-4-5
 cursor.model: fast
-cursor.readonly: true
-vscode.tools: ['fetch','search']
-vscode.model: ['Claude Sonnet 4.5']
+vscode.model: ['Claude Haiku 4.5 (copilot)']
+
+# Pass-through (forwarded as-is to the tool's output)
+opencode.extra.top_p: 0.9
 ---
 ```
 
-See `pack/shared/agents/frontend-ui.md` for a full commented catalog of supported agent keys per tool.
-See `pack/shared/commands/changelog.md` for a full commented catalog of supported command keys per tool.
+**Resolution order:** `<tool>.<field>` > `common.<field>` > default/omitted.
+
+---
+
+## Commands
+
+Slash commands / prompt files that the user triggers manually (e.g. `/commit`, `/changelog`).
+
+### Source format
+
+`pack/shared/commands/<name>.md`
+
+```yaml
+---
+name: commit
+description: Propose a commit message from staged git changes
+argument-hint: "[short|normal|verbose|help]"
+claude.disable-model-invocation: true
+vscode.agent: agent
+---
+Goal: propose a commit message from staged git changes.
+...
+```
+
+### Generated outputs
+
+| Tool | Project path | Global path |
+|---|---|---|
+| Claude Code | `.claude/commands/<name>.md` | `~/.claude/commands/` |
+| Cursor | `.cursor/commands/<name>.md` | `~/.cursor/commands/` |
+| OpenCode | `.opencode/commands/<name>.md` | `~/.config/opencode/commands/` |
+| VS Code | `.github/prompts/<name>.prompt.md` | via `settings.json` (see below) |
+
+### Supported frontmatter keys
+
+| Key | Claude | OpenCode | Cursor | VS Code |
+|---|---|---|---|---|
+| `name` | name | *(filename)* | *(filename)* | name |
+| `description` | description | description | *(body only)* | description |
+| `argument-hint` | argument-hint | — | — | argument-hint |
+| `disable-model-invocation` | disable-model-invocation | — | — | — |
+| `user-invocable` | user-invocable | — | — | — |
+| `allowed-tools` | allowed-tools | — | — | — |
+| `model` | model | model | — | model |
+| `context` | context (fork) | — | — | — |
+| `agent` | agent | agent | — | agent |
+| `hooks` | hooks | — | — | — |
+| `subtask` | — | subtask | — | — |
+| `tools` | — | — | — | tools |
+
+### Included commands
+
+| Command | Description |
+|---|---|
+| `/commit` | Propose a conventional commit message from staged changes |
+| `/changelog` | Update changelog from staged changes (Keep a Changelog format) |
+| `/documentation` | Update affected docs (README, CONTRIBUTING, etc.) from staged changes |
+| `/resolve-conflicts` | AI-assisted merge/rebase conflict resolution |
+
+---
+
+## Agents (sub-agents)
+
+Specialized AI personas that can be invoked as sub-agents (by the main agent or explicitly).
+
+### Source format
+
+`pack/shared/agents/<name>.md`
+
+```yaml
+---
+name: web-researcher
+description: Deep web research agent — iterative search, analysis, and synthesis
+claude.model: haiku
+claude.maxTurns: 30
+claude.mcpServers: ["searxng"]
+opencode.mode: subagent
+opencode.model: anthropic/claude-haiku-4-5
+cursor.model: fast
+cursor.readonly: true
+vscode.tools: ['fetch','search','readFile','agent','searxng/*']
+---
+You are a deep web research agent...
+```
+
+### Generated outputs
+
+| Tool | Project path | Global path |
+|---|---|---|
+| Claude Code | `.claude/agents/<name>.md` | `~/.claude/agents/` |
+| Cursor | `.cursor/agents/<name>.md` | `~/.cursor/agents/` |
+| OpenCode | `.opencode/agents/<name>.md` | `~/.config/opencode/agents/` |
+| VS Code | `.github/agents/<name>.agent.md` | via `settings.json` |
+
+### Supported frontmatter keys
+
+| Key | Claude | OpenCode | Cursor | VS Code |
+|---|---|---|---|---|
+| `name` | name | *(filename)* | name | name |
+| `description` | description | description | description | description |
+| `model` | model | model | model | model |
+| `tools` | tools | tools (JSON obj) | — | tools |
+| `disallowedTools` | disallowedTools | — | — | — |
+| `permissionMode` | permissionMode | — | — | — |
+| `maxTurns` | maxTurns | — | — | — |
+| `mcpServers` | mcpServers | — | — | mcp-servers |
+| `hooks` | hooks | — | — | — |
+| `memory` | memory | — | — | — |
+| `background` | background | — | — | — |
+| `isolation` | isolation | — | — | — |
+| `mode` | — | mode | — | — |
+| `temperature` | — | temperature | — | — |
+| `steps` | — | steps | — | — |
+| `permission` | — | permission (JSON) | — | — |
+| `hidden` | — | hidden | — | — |
+| `color` | — | color | — | — |
+| `top_p` | — | top_p | — | — |
+| `readonly` | — | — | readonly | — |
+| `is_background` | — | — | is_background | — |
+| `agents` | — | — | — | agents |
+| `user-invokable` | — | — | — | user-invokable |
+| `disable-model-invocation` | — | — | — | disable-model-invocation |
+| `handoffs` | — | — | — | handoffs |
+
+### Included agents
+
+| Agent | Description |
+|---|---|
+| `web-researcher` | Deep iterative web research with SearXNG MCP — broad search, deep dive, synthesis |
+| `frontend-ui` | Frontend UI specialist — accessibility, UX, reusable components |
+
+---
+
+## Skills
+
+Reusable knowledge packages that agents can load on demand. Skills follow the open [Agent Skills](https://agentskills.io) standard (`SKILL.md`).
+
+### Source format
+
+`pack/shared/skills/<name>/SKILL.md`
+
+```yaml
+---
+name: code-review
+description: >-
+  Structured code review workflow. Use when asked to review a PR,
+  check code quality, or audit for security issues.
+claude.allowed-tools: Read, Glob, Grep
+opencode.permission: {"edit":"deny"}
+---
+## Step 1 — Understand the change
+Read the diff and identify the intent...
+
+## Step 2 — Check for issues
+...
+```
+
+A skill directory can also contain supporting files (references, scripts, templates) — reference them from the SKILL.md body so the agent knows when to load them.
+
+### Generated outputs
+
+| Tool | Project path | Global path |
+|---|---|---|
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `~/.claude/skills/` |
+| Cursor | `.cursor/skills/<name>/SKILL.md` | `~/.cursor/skills/` |
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `~/.config/opencode/skills/` |
+| VS Code | `.github/skills/<name>/SKILL.md` | via `settings.json` |
+
+### Supported frontmatter keys
+
+| Key | Claude | OpenCode | Cursor | VS Code |
+|---|---|---|---|---|
+| `name` | name | name | name | name |
+| `description` | description | description | description | description |
+| `allowed-tools` | allowed-tools | — | — | — |
+| `disable-model-invocation` | disable-model-invocation | — | — | disable-model-invocation |
+| `model` | model | — | — | — |
+| `permission` | — | permission | — | — |
+| `user-invokable` | — | — | — | user-invokable |
+
+### Skills vs Commands vs Agents
+
+| | Commands | Agents | Skills |
+|---|---|---|---|
+| **Trigger** | User types `/name` | Main agent delegates or user invokes | Agent loads automatically when relevant |
+| **Context** | Runs in current session | Runs in its own sub-context | Injected into the calling agent's context |
+| **Scope** | One-shot task | Persistent persona with tools | Reusable knowledge/workflow |
+| **Example** | `/commit`, `/changelog` | `web-researcher`, `frontend-ui` | `code-review`, `deployment` |
+
+---
 
 ## MCP servers
 
-### Canonical format (`pack/shared/mcp.json`)
+External tool servers that agents can call (search engines, databases, APIs, etc.).
 
-Each server entry needs a `type` field to select the transport:
+### Source format
 
-| `type` | Use case | Required fields |
-|---|---|---|
-| `stdio` | Local program launched as a subprocess | `command`, `args` |
-| `http` | Remote server — streamable HTTP (recommended) | `url` |
-| `sse` | Remote server — legacy Server-Sent Events | `url` |
+`pack/shared/mcp.json` — flat object, one key per server:
 
-> **Type inference:** if `type` is omitted, `stdio` is assumed when `command` is present, `http` when only `url` is present.
-
-**Local server (stdio):**
 ```json
 {
-  "my-server": {
-    "type": "stdio",
+  "searxng": {
     "command": "npx",
-    "args": ["-y", "my-mcp-package"],
-    "env": { "API_KEY": "secret" }
-  }
-}
-```
-
-**Remote server (HTTP):**
-```json
-{
+    "args": ["-y", "mcp-searxng"],
+    "env": { "SEARXNG_URL": "https://search.example.com/" }
+  },
   "github": {
     "type": "http",
     "url": "https://api.githubcopilot.com/mcp/",
@@ -145,29 +268,46 @@ Each server entry needs a `type` field to select the transport:
 }
 ```
 
-### How setup transforms the canonical format
+### Transport types
 
-**stdio servers — what each tool receives:**
+| `type` | When to use | Required fields |
+|---|---|---|
+| `stdio` *(default)* | Local program launched as subprocess | `command`, `args` |
+| `http` *(recommended for remote)* | Streamable HTTP server | `url` |
+| `sse` | Legacy Server-Sent Events | `url` |
 
-| Field | Claude Code | Cursor | VS Code | OpenCode |
+If `type` is omitted: `stdio` when `command` is present, `http` when only `url` is present.
+
+### How setup transforms each server
+
+**stdio servers:**
+
+| | Claude Code | Cursor | VS Code | OpenCode |
 |---|---|---|---|---|
-| `type` | omitted | omitted | omitted | `"local"` (required) |
-| `command` | string `"npx"` | string `"npx"` | string `"npx"` | **array** `["npx", "-y", "pkg"]` |
+| type | *(omitted)* | *(omitted)* | *(omitted)* | `"local"` |
+| command | `"npx"` (string) | `"npx"` (string) | `"npx"` (string) | `["npx","-y","pkg"]` (array) |
 | env key | `env` | `env` | `env` | `environment` |
-| root key | `mcpServers` | `mcpServers` | `servers` | `mcp` (inside `opencode.json`) |
+| root key | `mcpServers` | `mcpServers` | `servers` | `mcp` in `opencode.json` |
 
-**remote servers (`http` / `sse`) — what each tool receives:**
+**Remote servers (http/sse):**
 
-| Field | Claude Code | Cursor | VS Code | OpenCode |
+| | Claude Code | Cursor | VS Code | OpenCode |
 |---|---|---|---|---|
-| `type` | `"http"` or `"sse"` | **omitted** (auto-detected) | `"http"` or `"sse"` | `"remote"` (always, regardless of transport) |
-| `url` | `url` | `url` | `url` | `url` |
-| headers | `headers` | `headers` | `headers` | `headers` |
-| root key | `mcpServers` | `mcpServers` | `servers` | `mcp` (inside `opencode.json`) |
+| type | `"http"` / `"sse"` | *(omitted)* | `"http"` / `"sse"` | `"remote"` |
+| root key | `mcpServers` | `mcpServers` | `servers` | `mcp` in `opencode.json` |
 
-### Variable interpolation in `headers` / `env`
+### Generated outputs
 
-Values are copied verbatim — setup does **not** rewrite them. Use the syntax of the tool you target:
+| Tool | Project path | Global path |
+|---|---|---|
+| Claude Code | `.mcp.json` | `~/.claude.json` (`mcpServers` key merged) |
+| Cursor | `.cursor/mcp.json` | `~/.cursor/mcp.json` (symlinked) |
+| VS Code | `.vscode/mcp.json` | `Code/User/mcp.json` (symlinked) |
+| OpenCode | *(in opencode.json)* | `~/.config/opencode/opencode.json` (`mcp` key merged) |
+
+### Variable interpolation
+
+Values in `env` and `headers` are copied verbatim. Use the syntax your tool expects:
 
 | Tool | Syntax | Example |
 |---|---|---|
@@ -176,18 +316,93 @@ Values are copied verbatim — setup does **not** rewrite them. Use the syntax o
 | OpenCode | `{env:VAR}` (no `$`) | `"Bearer {env:GITHUB_TOKEN}"` |
 | VS Code | `${input:id}` (prompted) or `${VAR}` | `"Bearer ${input:token}"` |
 
-If a server is consumed by multiple tools, use a plain env var name (`$TOKEN`, no tool prefix) and set it in your shell — all tools will inherit it from the environment.
+For cross-tool compatibility, use plain env vars set in your shell — all tools inherit them.
 
-### Tool-specific features (manual override after setup)
+---
 
-The canonical format covers stdio and HTTP/SSE. These tool-specific fields are not generated — edit the generated file after running setup if you need them:
+## Global deployment details
 
-| Feature | Tool | Field to add inside the server entry |
-|---|---|---|
-| OAuth pre-registered client | Claude Code | `"oauth": { "clientId": "…", "callbackPort": 8080 }` |
-| OAuth static credentials | Cursor | `"auth": { "CLIENT_ID": "…", "CLIENT_SECRET": "…", "scopes": ["read"] }` |
-| OAuth dynamic/pre-registered | OpenCode | `"oauth": {}` · set `"oauth": false` to disable |
-| Load env from a `.env` file | Cursor, VS Code | `"envFile": "${workspaceFolder}/.env"` |
-| Disable a server at startup | OpenCode | `"enabled": false` |
-| Tool-call timeout | OpenCode | `"timeout": 10000` (ms) |
-| Prompted secrets (stored) | VS Code | `"inputs"` array at root of `mcp.json` |
+Setup deploys everything to user-level config directories so agents, commands, skills, and MCP are available in **every project** on the machine.
+
+| Tool | Commands | Agents | Skills | MCP |
+|---|---|---|---|---|
+| Claude Code | `~/.claude/commands/` | `~/.claude/agents/` | `~/.claude/skills/` | `~/.claude.json` merge |
+| Cursor | `~/.cursor/commands/` | `~/.cursor/agents/` | `~/.cursor/skills/` | `~/.cursor/mcp.json` |
+| OpenCode | `~/.config/opencode/commands/` | `~/.config/opencode/agents/` | `~/.config/opencode/skills/` | `opencode.json` merge |
+| VS Code | `settings.json` * | `settings.json` * | `settings.json` * | `Code/User/mcp.json` |
+
+\* VS Code has no fixed global directory for agents/skills/prompts. Setup adds paths to `Code/User/settings.json`:
+
+```json
+{
+  "chat.agentFilesLocations": ["/path/to/smartlink/.github/agents"],
+  "chat.agentSkillsLocations": ["/path/to/smartlink/.github/skills"]
+}
+```
+
+### Symlinks vs copies
+
+On systems with symlink support (Linux, macOS, Windows with Developer Mode), setup creates symlinks — changes propagate automatically on next `setup` run. Without symlinks (default Windows), files are copied and you must re-run `setup` after editing sources.
+
+---
+
+## Project structure
+
+```
+pack/shared/
+  commands/
+    changelog.md
+    commit.md
+    documentation.md
+    resolve-conflicts.md
+  agents/
+    frontend-ui.md
+    web-researcher.md
+  skills/                     <-- add skill directories here
+    <name>/SKILL.md
+  mcp.json
+
+setup.sh                      <-- Linux / macOS / WSL
+setup.ps1                     <-- Windows (PowerShell)
+setup.cmd                     <-- Windows (calls setup.ps1)
+```
+
+Generated files (all gitignored):
+
+```
+.claude/commands/  agents/  skills/     <-- Claude Code
+.cursor/commands/  agents/  skills/     <-- Cursor
+.opencode/commands/  agents/  skills/   <-- OpenCode
+.github/prompts/  agents/  skills/      <-- VS Code Copilot
+.mcp.json  .cursor/mcp.json  .vscode/mcp.json
+```
+
+## Adding new resources
+
+**New command:**
+```bash
+# Create pack/shared/commands/my-command.md with frontmatter + body
+# Run setup
+setup.cmd   # or ./setup.sh
+```
+
+**New agent:**
+```bash
+# Create pack/shared/agents/my-agent.md with frontmatter + body
+setup.cmd
+```
+
+**New skill:**
+```bash
+# Create pack/shared/skills/my-skill/SKILL.md with frontmatter + body
+# Optionally add supporting files in the same directory
+setup.cmd
+```
+
+**New MCP server:**
+```bash
+# Add an entry to pack/shared/mcp.json
+setup.cmd
+```
+
+Convention: the filename (commands/agents) or directory name (skills) should match the `name` field in the frontmatter.

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_COMMANDS_DIR="$ROOT/pack/shared/commands"
 SHARED_AGENTS_DIR="$ROOT/pack/shared/agents"
+SHARED_SKILLS_DIR="$ROOT/pack/shared/skills"
 
 written=0
 unchanged=0
@@ -445,6 +446,67 @@ generate_agent_outputs() {
   write_if_changed "$ROOT/.github/agents/$name.agent.md" "$content"
 }
 
+generate_skill_outputs() {
+  local name="$1"
+  local description="$2"
+  local body="$3"
+  local header content
+
+  # Claude Code skill
+  header='---'
+  header+=$'\n'
+  header+="name: $(yaml_quote "$name")"
+  header+=$'\n'
+  header+="description: $(yaml_quote "$description")"
+  header+=$'\n'
+  append_yaml_field header "allowed-tools"            "$(resolve_agent_value "claude" "allowed-tools")"
+  append_yaml_field header "disable-model-invocation" "$(resolve_agent_value "claude" "disable-model-invocation")"
+  append_yaml_field header "model"                    "$(resolve_agent_value "claude" "model")"
+  append_extra_fields header "claude.extra."
+  header+='---'
+  printf -v content '%s\n\n%s' "$header" "$body"
+  write_if_changed "$ROOT/.claude/skills/$name/SKILL.md" "$content"
+
+  # Cursor skill
+  header='---'
+  header+=$'\n'
+  header+="name: $(yaml_quote "$name")"
+  header+=$'\n'
+  header+="description: $(yaml_quote "$description")"
+  header+=$'\n'
+  append_extra_fields header "cursor.extra."
+  header+='---'
+  printf -v content '%s\n\n%s' "$header" "$body"
+  write_if_changed "$ROOT/.cursor/skills/$name/SKILL.md" "$content"
+
+  # OpenCode skill
+  header='---'
+  header+=$'\n'
+  header+="name: $(yaml_quote "$name")"
+  header+=$'\n'
+  header+="description: $(yaml_quote "$description")"
+  header+=$'\n'
+  append_yaml_field header "permission" "$(resolve_agent_value "opencode" "permission")"
+  append_extra_fields header "opencode.extra."
+  header+='---'
+  printf -v content '%s\n\n%s' "$header" "$body"
+  write_if_changed "$ROOT/.opencode/skills/$name/SKILL.md" "$content"
+
+  # VS Code skill (.github/skills/)
+  header='---'
+  header+=$'\n'
+  header+="name: $(yaml_quote "$name")"
+  header+=$'\n'
+  header+="description: $(yaml_quote "$description")"
+  header+=$'\n'
+  append_yaml_field header "user-invokable"           "$(resolve_agent_value "vscode" "user-invokable")"
+  append_yaml_field header "disable-model-invocation" "$(resolve_agent_value "vscode" "disable-model-invocation")"
+  append_extra_fields header "vscode.extra."
+  header+='---'
+  printf -v content '%s\n\n%s' "$header" "$body"
+  write_if_changed "$ROOT/.github/skills/$name/SKILL.md" "$content"
+}
+
 command_count=0
 for file in "$SHARED_COMMANDS_DIR"/*.md; do
   [ -f "$file" ] || continue
@@ -461,10 +523,26 @@ for file in "$SHARED_AGENTS_DIR"/*.md; do
   generate_agent_outputs "$PARSED_NAME" "$PARSED_DESCRIPTION" "$PARSED_BODY"
 done
 
-if [ "$command_count" -eq 0 ] && [ "$agent_count" -eq 0 ]; then
-  printf 'Nothing to generate. Add canonical files in pack/shared/commands and pack/shared/agents.\n' >&2
+skill_count=0
+skill_dirs=()
+if [ -d "$SHARED_SKILLS_DIR" ]; then
+  while IFS= read -r -d '' d; do
+    [ -f "$d/SKILL.md" ] || continue
+    skill_dirs+=("$d")
+    skill_count=$((skill_count + 1))
+  done < <(find "$SHARED_SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+fi
+
+if [ "$command_count" -eq 0 ] && [ "$agent_count" -eq 0 ] && [ "$skill_count" -eq 0 ]; then
+  printf 'Nothing to generate. Add canonical files in pack/shared/commands, pack/shared/agents, or pack/shared/skills/<name>/SKILL.md.\n' >&2
   exit 1
 fi
+
+# ── Skills generation ─────────────────────────────────────────────────
+for skill_dir in "${skill_dirs[@]}"; do
+  parse_doc "$skill_dir/SKILL.md"
+  generate_skill_outputs "$PARSED_NAME" "$PARSED_DESCRIPTION" "$PARSED_BODY"
+done
 
 # ── MCP config generation ──────────────────────────────────────────────
 SHARED_MCP_FILE="$ROOT/pack/shared/mcp.json"
@@ -717,6 +795,64 @@ for file in "$SHARED_AGENTS_DIR"/*.md; do
   safe_symlink "$ROOT/.cursor/agents/$name.md" "$CURSOR_GLOBAL/agents/$name.md"
 done
 
+# Symlink skills globally
+for skill_dir in "${skill_dirs[@]}"; do
+  name="$(basename "$skill_dir")"
+  safe_symlink "$ROOT/.claude/skills/$name/SKILL.md"    "$CLAUDE_GLOBAL/skills/$name/SKILL.md"
+  safe_symlink "$ROOT/.opencode/skills/$name/SKILL.md"  "$OPENCODE_GLOBAL/skills/$name/SKILL.md"
+  safe_symlink "$ROOT/.cursor/skills/$name/SKILL.md"    "$CURSOR_GLOBAL/skills/$name/SKILL.md"
+done
+
+# ── VS Code: update global settings.json for agents + skills ─────────
+if [ -d "$VSCODE_GLOBAL" ]; then
+  vscode_settings_path="$VSCODE_GLOBAL/settings.json"
+  if command -v python3 &>/dev/null; then
+    _skills_arg=""
+    [ "$skill_count" -gt 0 ] && _skills_arg="$ROOT/.github/skills"
+
+    new_vscode_settings="$(python3 - "$vscode_settings_path" "$ROOT/.github/agents" "$_skills_arg" <<'PYEOF'
+import json, sys, collections
+settings_path, agents_path, skills_path = sys.argv[1], sys.argv[2], sys.argv[3]
+existing = collections.OrderedDict()
+try:
+    with open(settings_path) as f:
+        existing = json.load(f, object_pairs_hook=collections.OrderedDict)
+except (FileNotFoundError, json.JSONDecodeError):
+    pass
+key = 'chat.agentFilesLocations'
+arr = list(existing.get(key) or [])
+if agents_path not in arr:
+    arr.append(agents_path)
+existing[key] = arr
+if skills_path:
+    key2 = 'chat.agentSkillsLocations'
+    arr2 = list(existing.get(key2) or [])
+    if skills_path not in arr2:
+        arr2.append(skills_path)
+    existing[key2] = arr2
+print(json.dumps(existing, indent=2))
+PYEOF
+)"
+    if [ -n "$new_vscode_settings" ]; then
+      tmp_vscode="$(mktemp)"
+      printf '%s\n' "$new_vscode_settings" > "$tmp_vscode"
+      if [ -f "$vscode_settings_path" ] && cmp -s "$vscode_settings_path" "$tmp_vscode"; then
+        printf 'ok    ~/.../Code/User/settings.json (chat.agentFilesLocations)\n'
+        skipped=$((skipped + 1))
+      else
+        mv "$tmp_vscode" "$vscode_settings_path"
+        printf 'write ~/.../Code/User/settings.json (chat.agentFilesLocations)\n'
+        copied=$((copied + 1))
+      fi
+      rm -f "$tmp_vscode" 2>/dev/null
+    fi
+  else
+    printf 'skip  VS Code settings.json — python3 not found\n'
+  fi
+else
+  printf 'skip  VS Code not found at %s\n' "$VSCODE_GLOBAL"
+fi
+
 printf '\nSymlink summary:\n'
 if [ "$symlinked" -gt 0 ]; then
   printf -- '- linked: %s\n' "$symlinked"
@@ -735,18 +871,27 @@ if [ "$symlink_failed" -eq 1 ]; then
   printf '      To enable symlinks, activate Developer Mode in Windows Settings > For developers.\n'
 fi
 
-printf '\nIsolation report:\n'
-printf -- '- OpenCode reads .opencode/commands, .opencode/agents, and mcp from opencode.json.\n'
-printf -- '- Claude Code reads .claude/commands, .claude/agents, and .mcp.json.\n'
-printf -- '- Cursor reads .cursor/commands, .cursor/agents, and .cursor/mcp.json.\n'
-printf -- '- VS Code Copilot reads .github/prompts, .github/agents, and .vscode/mcp.json.\n'
-printf -- '- All generated from the same canonical source in pack/shared/.\n'
-printf '\nMCP servers:\n'
-printf -- '- Claude Code: .mcp.json (project) + ~/.claude.json mcpServers (global)\n'
-printf -- '- Cursor: .cursor/mcp.json (project) + ~/.cursor/mcp.json (global, symlinked)\n'
-printf -- '- OpenCode: mcp key merged into ~/.config/opencode/opencode.json (global)\n'
-printf -- '- VS Code: .vscode/mcp.json (project) + ~/.config/Code/User/mcp.json (global, symlinked)\n'
+printf '\nGlobal deployment summary (all 4 tools):\n'
 printf '\n'
-printf 'NOTE: VS Code has no fixed global config directory for prompts/agents.\n'
-printf '      To use generated prompts/agents globally, add this to your VS Code settings.json:\n'
-printf '        "chat.agentFilesLocations": { "%s/.github": true }\n' "$ROOT"
+printf '  OpenCode\n'
+printf '    workspace : .opencode/commands  .opencode/agents  .opencode/skills\n'
+printf '    global    : ~/.config/opencode/commands  agents  skills  (symlinked)\n'
+printf '    MCP       : mcp key merged into ~/.config/opencode/opencode.json\n'
+printf '\n'
+printf '  Claude Code\n'
+printf '    workspace : .claude/commands  .claude/agents  .claude/skills  .mcp.json\n'
+printf '    global    : ~/.claude/commands  agents  skills  (symlinked)\n'
+printf '    MCP       : mcpServers merged into ~/.claude.json\n'
+printf '\n'
+printf '  Cursor\n'
+printf '    workspace : .cursor/commands  .cursor/agents  .cursor/skills  .cursor/mcp.json\n'
+printf '    global    : ~/.cursor/commands  agents  skills  mcp.json  (symlinked)\n'
+printf '\n'
+printf '  VS Code Copilot\n'
+printf '    workspace : .github/prompts  .github/agents  .github/skills  .vscode/mcp.json\n'
+printf '    global MCP: ~/.config/Code/User/mcp.json  (symlinked)\n'
+printf '    global agents/skills: ~/.config/Code/User/settings.json\n'
+printf '      chat.agentFilesLocations  -> .github/agents\n'
+[ "$skill_count" -gt 0 ] && printf '      chat.agentSkillsLocations -> .github/skills\n'
+printf '\n'
+printf '  All generated from the same canonical source in pack/shared/.\n'
