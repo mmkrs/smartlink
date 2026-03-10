@@ -2,7 +2,7 @@
 name: qa-review
 description: Validates implemented slices through tests, build checks, and release-readiness review
 opencode.mode: subagent
-opencode.model: openai/o4-mini
+opencode.model: openai/gpt-5.2-codex
 opencode.temperature: 0.1
 opencode.steps: 10
 opencode.tools: {"write":false,"edit":false,"patch":false}

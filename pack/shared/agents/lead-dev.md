@@ -2,6 +2,7 @@
 name: lead-dev
 description: Implements approved development slices while preserving modularity, tests, and repository conventions
 opencode.mode: subagent
+opencode.model: openai/gpt-5.3-codex
 opencode.temperature: 0.1
 opencode.steps: 20
 opencode.permission: {"task":{"*":"deny"}}

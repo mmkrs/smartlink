@@ -2,7 +2,7 @@
 name: game-design
 description: Reviews mechanics and gameplay-facing proposals for design coherence and player-facing clarity
 opencode.mode: subagent
-opencode.model: openai/gpt-4o-mini
+opencode.model: openai/gpt-5.2
 opencode.temperature: 0.2
 opencode.steps: 6
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}

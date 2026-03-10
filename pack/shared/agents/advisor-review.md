@@ -2,7 +2,7 @@
 name: advisor-review
 description: Identifies delivery risks, hidden dependencies, and recommends the next safe action
 opencode.mode: subagent
-opencode.model: openai/gpt-4o-mini
+opencode.model: openai/gpt-5.1-codex-mini
 opencode.temperature: 0.1
 opencode.steps: 6
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}

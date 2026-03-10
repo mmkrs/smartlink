@@ -2,6 +2,7 @@
 name: studio-orchestrator
 description: Orchestrates a project-aware OpenCode development studio through controlled subagent delegation
 opencode.mode: primary
+opencode.model: openai/gpt-5.4
 opencode.temperature: 0.1
 opencode.steps: 10
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}
