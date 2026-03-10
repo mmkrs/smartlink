@@ -5,7 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_COMMANDS_DIR="$ROOT/pack/shared/commands"
 SHARED_AGENTS_DIR="$ROOT/pack/shared/agents"
 SHARED_SKILLS_DIR="$ROOT/pack/shared/skills"
-
 written=0
 unchanged=0
 total=0
@@ -203,6 +202,7 @@ parse_doc() {
   meta_reset
 
   while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
     case "$mode" in
       start)
         if [ "$line" != '---' ]; then

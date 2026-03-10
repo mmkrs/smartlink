@@ -112,6 +112,10 @@ Goal: propose a commit message from staged git changes.
 | `/changelog` | Update changelog from staged changes (Keep a Changelog format) |
 | `/documentation` | Update affected docs (README, CONTRIBUTING, etc.) from staged changes |
 | `/resolve-conflicts` | AI-assisted merge/rebase conflict resolution |
+| `/studio-start` | Bootstrap the studio on a project — reads `AGENTS.md`, identifies phase, plans first slice |
+| `/proposal-review` | Run architect and advisor reviews on the current proposal |
+| `/implement-slice` | Delegate an approved slice to lead-dev for implementation + QA |
+| `/qa-check` | Run QA validation on the latest implemented slice |
 
 ---
 
@@ -180,10 +184,28 @@ You are a deep web research agent...
 
 ### Included agents
 
-| Agent | Description |
-|---|---|
-| `web-researcher` | Deep iterative web research with SearXNG MCP — broad search, deep dive, synthesis |
-| `frontend-ui` | Frontend UI specialist — accessibility, UX, reusable components |
+| Agent | Mode | Description |
+|---|---|---|
+| `studio-orchestrator` | primary | Orchestrates multi-agent studio workflow — reads `AGENTS.md`, routes to subagents |
+| `lead-dev` | subagent | Implements approved slices — coding, tests, modular changes |
+| `architect-review` | subagent | Reviews architecture fit, scope discipline, dependency direction (read-only) |
+| `advisor-review` | subagent (hidden) | Reviews risk, sequencing, and next safe action (read-only) |
+| `game-design` | subagent | Reviews gameplay-facing proposals for design coherence (read-only) |
+| `qa-review` | subagent | Validates slices through tests, build checks, scope verification |
+| `web-researcher` | subagent | Deep iterative web research with SearXNG MCP — broad search, deep dive, synthesis |
+| `frontend-ui` | subagent | Frontend UI specialist — accessibility, UX, reusable components |
+
+### Studio workflow
+
+The studio agents form an orchestrator-centered team. `studio-orchestrator` is the only primary agent — all others are subagents that cannot invoke each other directly.
+
+When deployed globally, the studio works with any project that has an `AGENTS.md` at its root. The orchestrator reads `AGENTS.md` to discover project anchors, workflow rules, and the current development phase.
+
+Typical flow:
+1. `/studio-start` — load project context, identify phase, plan first slice
+2. `/proposal-review` — architect + advisor gate before implementation
+3. `/implement-slice` — lead-dev implements, qa-review validates
+4. `/qa-check` — standalone QA pass if needed
 
 ---
 
@@ -355,9 +377,19 @@ pack/shared/
     commit.md
     documentation.md
     resolve-conflicts.md
+    studio-start.md
+    proposal-review.md
+    implement-slice.md
+    qa-check.md
   agents/
-    frontend-ui.md
+    studio-orchestrator.md
+    lead-dev.md
+    architect-review.md
+    advisor-review.md
+    game-design.md
+    qa-review.md
     web-researcher.md
+    frontend-ui.md
   skills/                     <-- add skill directories here
     <name>/SKILL.md
   mcp.json

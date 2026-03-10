@@ -135,6 +135,77 @@ function Resolve-AgentValue {
     return $null
 }
 
+function ConvertTo-OrderedHash {
+    param($InputObject)
+
+    if ($null -eq $InputObject) {
+        return [ordered]@{}
+    }
+
+    $hash = [ordered]@{}
+    foreach ($prop in $InputObject.PSObject.Properties) {
+        if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
+            $hash[$prop.Name] = ConvertTo-OrderedHash $prop.Value
+        }
+        elseif ($prop.Value -is [System.Array]) {
+            $hash[$prop.Name] = @($prop.Value)
+        }
+        else {
+            $hash[$prop.Name] = $prop.Value
+        }
+    }
+
+    return $hash
+}
+
+function ConvertTo-StringArray {
+    param($Value)
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [string]) {
+        $trimmed = $Value.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            return @()
+        }
+
+        if ($trimmed.StartsWith("[") -and $trimmed.EndsWith("]")) {
+            $parsed = $trimmed | ConvertFrom-Json
+            return @($parsed | ForEach-Object { [string]$_ })
+        }
+
+        return @([string]$Value)
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        return @($Value | ForEach-Object { [string]$_ })
+    }
+
+    return @([string]$Value)
+}
+
+function Merge-UniqueStrings {
+    param(
+        [string[]]$Base,
+        [string[]]$Additions
+    )
+
+    $merged = New-Object System.Collections.Generic.List[string]
+    foreach ($item in (@($Base) + @($Additions))) {
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
+
+        if (-not $merged.Contains($item)) {
+            $merged.Add($item)
+        }
+    }
+
+    return @($merged)
+}
+
 function Add-OptionalEntry {
     param(
         [ref]$Entries,
@@ -726,24 +797,6 @@ foreach ($file in $commandFiles) {
     Safe-Symlink -Source (Join-Path $Root ".cursor/commands/$name.md") -Target (Join-Path $CursorGlobal "commands/$name.md")
 }
 
-# Helper: convert PSCustomObject to ordered hashtable (PS 5.1 compat)
-# Defined here so it is available for both MCP merge and VS Code settings update.
-function ConvertTo-OrderedHash {
-    param($InputObject)
-    if ($null -eq $InputObject) { return [ordered]@{} }
-    $hash = [ordered]@{}
-    foreach ($prop in $InputObject.PSObject.Properties) {
-        if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
-            $hash[$prop.Name] = ConvertTo-OrderedHash $prop.Value
-        } elseif ($prop.Value -is [System.Array]) {
-            $hash[$prop.Name] = @($prop.Value)
-        } else {
-            $hash[$prop.Name] = $prop.Value
-        }
-    }
-    return $hash
-}
-
 # Symlink MCP configs
 if (Test-Path -LiteralPath $SharedMcpFile) {
 
@@ -818,24 +871,24 @@ foreach ($skillDir in $skillDirs) {
     Safe-Symlink -Source (Join-Path $Root ".cursor/skills/$name/SKILL.md")    -Target (Join-Path $CursorGlobal    "skills/$name/SKILL.md")
 }
 
-# ── VS Code: update global settings.json for agents + skills ─────────
+# VS Code: update global settings.json for agents and skills
 if (Test-Path -LiteralPath $VSCodeGlobal) {
     $vsCodeSettingsPath = Join-Path $VSCodeGlobal "settings.json"
-    $vsCodeSettingsObj  = [ordered]@{}
-    $vsCodeSettingsOk   = $true
+    $vsCodeSettingsObj = [ordered]@{}
+    $vsCodeSettingsOk = $true
 
     if (Test-Path -LiteralPath $vsCodeSettingsPath) {
         try {
             $parsed = [System.IO.File]::ReadAllText($vsCodeSettingsPath) | ConvertFrom-Json
             $vsCodeSettingsObj = ConvertTo-OrderedHash $parsed
-        } catch {
-            Write-Host "WARN  Could not parse VS Code settings.json — skipping settings update."
+        }
+        catch {
+            Write-Host "WARN  Could not parse VS Code settings.json, skipping settings update."
             $vsCodeSettingsOk = $false
         }
     }
 
     if ($vsCodeSettingsOk) {
-        # chat.agentFilesLocations — add .github/agents as a persistent global source
         $agentLocKey = "chat.agentFilesLocations"
         $agentLocArr = @()
         if ($vsCodeSettingsObj.Contains($agentLocKey)) {
@@ -844,13 +897,13 @@ if (Test-Path -LiteralPath $VSCodeGlobal) {
                 $agentLocArr = @($existing | ForEach-Object { "$_" })
             }
         }
-        $githubAgentsPath = (Join-Path $Root ".github" "agents").Replace('\', '/')
+
+        $githubAgentsPath = (Join-Path (Join-Path $Root ".github") "agents").Replace('\', '/')
         if ($agentLocArr -notcontains $githubAgentsPath) {
             $agentLocArr += $githubAgentsPath
         }
         $vsCodeSettingsObj[$agentLocKey] = $agentLocArr
 
-        # chat.agentSkillsLocations — add .github/skills if skills are present
         if ($skillDirs.Count -gt 0) {
             $skillLocKey = "chat.agentSkillsLocations"
             $skillLocArr = @()
@@ -860,7 +913,8 @@ if (Test-Path -LiteralPath $VSCodeGlobal) {
                     $skillLocArr = @($existing | ForEach-Object { "$_" })
                 }
             }
-            $githubSkillsPath = (Join-Path $Root ".github" "skills").Replace('\', '/')
+
+            $githubSkillsPath = (Join-Path (Join-Path $Root ".github") "skills").Replace('\', '/')
             if ($skillLocArr -notcontains $githubSkillsPath) {
                 $skillLocArr += $githubSkillsPath
             }
@@ -872,15 +926,25 @@ if (Test-Path -LiteralPath $VSCodeGlobal) {
         $vsCodeSettingsStatus = "write"
         if (Test-Path -LiteralPath $vsCodeSettingsPath) {
             $existVsCode = ([System.IO.File]::ReadAllText($vsCodeSettingsPath)) -replace "`r`n", "`n"
-            if ($existVsCode -ceq $newVsCodeSettings) { $vsCodeSettingsStatus = "ok" }
+            if ($existVsCode -ceq $newVsCodeSettings) {
+                $vsCodeSettingsStatus = "ok"
+            }
         }
+
         if ($vsCodeSettingsStatus -eq "write") {
             [System.IO.File]::WriteAllText($vsCodeSettingsPath, $newVsCodeSettings, [System.Text.UTF8Encoding]::new($false))
         }
+
         Write-Host ("{0,-5} %APPDATA%/Code/User/settings.json (chat.agentFilesLocations)" -f $vsCodeSettingsStatus)
-        if ($vsCodeSettingsStatus -eq "write") { $script:copied++ } else { $script:linkSkipped++ }
+        if ($vsCodeSettingsStatus -eq "write") {
+            $script:copied++
+        }
+        else {
+            $script:linkSkipped++
+        }
     }
-} else {
+}
+else {
     Write-Host "skip  VS Code not found at $VSCodeGlobal"
 }
 
