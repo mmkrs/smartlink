@@ -4,7 +4,7 @@ description: Validates implemented slices through tests, build checks, and relea
 opencode.mode: subagent
 opencode.model: openai/gpt-5.2-codex
 opencode.temperature: 0.1
-opencode.steps: 10
+opencode.steps: 20
 opencode.tools: {"write":false,"edit":false,"patch":false}
 opencode.permission: {"bash":{"*":"allow"},"task":{"*":"deny"}}
 opencode.color: error

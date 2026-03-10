@@ -4,7 +4,7 @@ description: Reviews mechanics and gameplay-facing proposals for design coherenc
 opencode.mode: subagent
 opencode.model: openai/gpt-5.2
 opencode.temperature: 0.2
-opencode.steps: 6
+opencode.steps: 10
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}
 opencode.permission: {"task":{"*":"deny"}}
 opencode.color: success

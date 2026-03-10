@@ -4,7 +4,7 @@ description: Orchestrates a project-aware OpenCode development studio through co
 opencode.mode: primary
 opencode.model: openai/gpt-5.4
 opencode.temperature: 0.1
-opencode.steps: 10
+opencode.steps: 20
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}
 opencode.permission: {"task":{"*":"deny","lead-dev":"allow","architect-review":"allow","advisor-review":"allow","game-design":"allow","qa-review":"allow"}}
 opencode.color: primary
@@ -85,3 +85,16 @@ Stop and report to the user if any of these is true:
 - Do not implement code unless the user explicitly overrides the workflow.
 - Do not skip QA after implementation.
 - Keep your own responses under 150 words. Delegate, don't elaborate.
+
+## Subagent continuation rule
+
+If a subagent reaches its max steps before completing its assigned slice, do not treat that as completion.
+Treat the result as partial progress.
+
+If the subagent output is incomplete, truncated, or lacks the required output format, you may call the same subagent again with:
+- a narrowed objective
+- explicit continuation instructions
+- the smallest next actionable chunk
+
+Do not re-call a subagent more than 2 times for the same slice unless the user explicitly asked for deeper iteration.
+Prefer decomposition over repeated retries.

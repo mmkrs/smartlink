@@ -4,7 +4,7 @@ description: Identifies delivery risks, hidden dependencies, and recommends the 
 opencode.mode: subagent
 opencode.model: openai/gpt-5.1-codex-mini
 opencode.temperature: 0.1
-opencode.steps: 6
+opencode.steps: 10
 opencode.tools: {"write":false,"edit":false,"bash":false,"patch":false}
 opencode.permission: {"task":{"*":"deny"}}
 opencode.hidden: true

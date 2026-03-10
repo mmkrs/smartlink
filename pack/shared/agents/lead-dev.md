@@ -4,7 +4,7 @@ description: Implements approved development slices while preserving modularity,
 opencode.mode: subagent
 opencode.model: openai/gpt-5.3-codex
 opencode.temperature: 0.1
-opencode.steps: 20
+opencode.steps: 30
 opencode.permission: {"task":{"*":"deny"}}
 opencode.color: accent
 ---
@@ -30,3 +30,6 @@ Implement one approved slice at a time. Keep code modular, explicit, and easy fo
 3. **Invariants preserved**: confirm architecture rules, module boundaries, phase limits respected
 4. **Tests**: tests added or run, with results
 5. **Unresolved**: remaining risks or follow-up items (or "none")
+
+If you are running out of steps, do not summarize broadly.
+Return the smallest unfinished next action so the orchestrator can re-invoke you precisely.
